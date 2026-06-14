@@ -9,13 +9,14 @@
   <img src="https://img.shields.io/github/license/marcuwynu23/haribon.svg" alt="License Badge"/>
 </p>
 
-Haribon is a lightweight Go-based load balancer designed for simplicity, observability, and production readiness.
+Haribon is a lightweight Go-based layer 7 (application‑layer) load balancer designed for simplicity, observability, and production readiness.
 It supports round-robin routing, health-aware balancing, structured logging, and Loki/Promtail integration.
 
 ---
 
 ## Features
 
+- Layer 7 (HTTP) load balancing
 - Round-robin load balancing
 - Health-aware routing (skip unhealthy backends)
 - Structured JSON logging (Loki-ready)
