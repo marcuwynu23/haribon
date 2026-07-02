@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Learn how Haribon distributes traffic across your backend services — simple to set up, health-aware, and fully observable.">
+  <title>About — Haribon</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <header class="header">
+    <div class="header-inner">
+      <a href="/" class="logo">
+        Haribon
+        <span class="logo-tagline">Load Balancer</span>
+      </a>
+      <nav class="nav">
+        <a href="/">Home</a>
+        <a href="about.html" class="active">About</a>
+        <a href="features.html">Features</a>
+        <a href="installation.html">Install</a>
+        <a href="usage.html">Usage</a>
+      </nav>
+      <button class="hamburger" aria-label="Open navigation menu" onclick="openDrawer()">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 12h18M3 6h18M3 18h18"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawer()"></div>
+  <div class="drawer" id="drawer">
+    <button class="drawer-close" aria-label="Close navigation menu" onclick="closeDrawer()">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M18 6L6 18M6 6l12 12"/>
+      </svg>
+    </button>
+    <nav class="drawer-nav">
+      <a href="/" onclick="closeDrawer()">Home</a>
+      <a href="about.html" onclick="closeDrawer()">About</a>
+      <a href="features.html" onclick="closeDrawer()">Features</a>
+      <a href="installation.html" onclick="closeDrawer()">Install</a>
+      <a href="usage.html" onclick="closeDrawer()">Usage</a>
+    </nav>
+  </div>
+
+  <section class="section">
+    <div class="section-header">
+      <h2>About Haribon</h2>
+      <p>Simple traffic distribution for your backend services, with health checks and observability built in.</p>
+    </div>
+    <div class="page-content">
+      <h2>Overview</h2>
+      <p>Haribon is a minimal, production-ready HTTP load balancer. It distributes incoming traffic across multiple backend servers using round-robin scheduling with health-aware filtering. Built for developers who need a lightweight reverse proxy without the overhead of complex configuration.</p>
+
+      <h2>When to Use Haribon</h2>
+      <h3>Microservices Development</h3>
+      <p>Route traffic across local service instances during development and testing. Haribon's round-robin scheduler distributes requests evenly, giving each instance equal load without manual coordination.</p>
+
+      <h3>Simple Production Deployments</h3>
+      <p>For small to medium-scale services that need request distribution without the operational complexity of traditional load balancers. Haribon handles health checking, structured logging, and graceful fallback with minimal configuration — just a YAML file and a single binary.</p>
+
+      <h3>Observability Stacks</h3>
+      <p>Haribon outputs structured JSON logs compatible with Loki and Promtail out of the box. Pair it with the included Docker Compose observability stack to get Grafana dashboards up in minutes.</p>
+
+      <h3>Legacy Service Discovery</h3>
+      <p>When you need a lightweight proxy fronting legacy services that lack built-in load balancing. Haribon's health-aware routing automatically skips unhealthy backends, providing basic resilience without invasive changes.</p>
+
+      <h2>Key Benefits</h2>
+      <ul>
+        <li><strong>Single binary</strong> — no runtime dependencies, no complex setup</li>
+        <li><strong>Health-aware routing</strong> — unhealthy backends are skipped automatically</li>
+        <li><strong>Loki-ready logging</strong> — structured JSON logs that integrate with the Grafana stack</li>
+        <li><strong>Docker support</strong> — official image on GitHub Container Registry</li>
+        <li><strong>Environment overrides</strong> — configure host and port via environment variables</li>
+        <li><strong>Graceful fallback</strong> — falls back to stdout if log file creation fails</li>
+      </ul>
+
+      <h2>How It Works</h2>
+      <p>Haribon listens on a configurable host and port, accepts incoming HTTP requests, and forwards them to your backend servers. Backends are selected in round-robin order — each request goes to the next available server, so no single instance gets overloaded.</p>
+
+      <p>Haribon keeps track of backend health automatically. Unhealthy servers are skipped until they recover. If all backends are down, Haribon returns a clear error so your clients know what happened. Everything is logged in structured JSON format, ready to feed into your observability pipeline.</p>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <h3>Haribon</h3>
+        <p>Traffic distribution made simple. Health checks, observability, and zero complexity.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <a href="about.html">About</a>
+        <a href="features.html">Features</a>
+        <a href="installation.html">Installation</a>
+        <a href="usage.html">Usage</a>
+      </div>
+      <div class="footer-col">
+        <h4>Resources</h4>
+        <a href="https://github.com/marcuwynu23/haribon" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/marcuwynu23/haribon/releases" target="_blank" rel="noopener">Releases</a>
+        <a href="https://github.com/marcuwynu23/haribon/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a>
+      </div>
+      <div class="footer-col">
+        <h4>Legal</h4>
+        <a href="https://github.com/marcuwynu23/haribon/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      &copy; 2026 Haribon. Released under the MIT License.
+    </div>
+  </footer>
+
+  <script>
+    function openDrawer() {
+      document.getElementById('drawer').classList.add('open');
+      document.getElementById('drawer-overlay').classList.add('open');
+    }
+
+    function closeDrawer() {
+      document.getElementById('drawer').classList.remove('open');
+      document.getElementById('drawer-overlay').classList.remove('open');
+    }
+  </script>
+</body>
+</html>
