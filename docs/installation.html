@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Install Haribon — download pre-built binaries, build from source, or pull the Docker image.">
+  <title>Installation — Haribon</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <header class="header">
+    <div class="header-inner">
+      <a href="/" class="logo">
+        Haribon
+        <span class="logo-tagline">Load Balancer</span>
+      </a>
+      <nav class="nav">
+        <a href="/">Home</a>
+        <a href="about.html">About</a>
+        <a href="features.html">Features</a>
+        <a href="installation.html" class="active">Install</a>
+        <a href="usage.html">Usage</a>
+      </nav>
+      <button class="hamburger" aria-label="Open navigation menu" onclick="openDrawer()">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 12h18M3 6h18M3 18h18"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawer()"></div>
+  <div class="drawer" id="drawer">
+    <button class="drawer-close" aria-label="Close navigation menu" onclick="closeDrawer()">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M18 6L6 18M6 6l12 12"/>
+      </svg>
+    </button>
+    <nav class="drawer-nav">
+      <a href="/" onclick="closeDrawer()">Home</a>
+      <a href="about.html" onclick="closeDrawer()">About</a>
+      <a href="features.html" onclick="closeDrawer()">Features</a>
+      <a href="installation.html" onclick="closeDrawer()">Install</a>
+      <a href="usage.html" onclick="closeDrawer()">Usage</a>
+    </nav>
+  </div>
+
+  <section class="section">
+    <div class="section-header">
+      <h2>Installation</h2>
+      <p>Choose the method that works best for you.</p>
+    </div>
+    <div class="install-steps">
+      <div class="install-step">
+        <div class="install-step-num">1</div>
+        <div class="install-step-content">
+          <h3>Build from Source</h3>
+          <p>Clone the repository and build the binary.</p>
+          <div class="code-block">
+            <span class="cmd">git clone</span> https://github.com/marcuwynu23/haribon.git<br>
+            <span class="cmd">cd</span> haribon<br>
+            <span class="cmd">go build</span> -o haribon main.go
+          </div>
+        </div>
+      </div>
+      <div class="install-step">
+        <div class="install-step-num">2</div>
+        <div class="install-step-content">
+          <h3>Docker</h3>
+          <p>Pull the official image from GitHub Container Registry.</p>
+          <div class="code-block">
+            <span class="cmd">docker pull</span> ghcr.io/marcuwynu23/haribon:latest
+          </div>
+          <p style="margin-top:12px">Run the container:</p>
+          <div class="code-block">
+            <span class="cmd">docker run</span> -d -p 4444:4444 ghcr.io/marcuwynu23/haribon:latest
+          </div>
+        </div>
+      </div>
+      <div class="install-step">
+        <div class="install-step-num">3</div>
+        <div class="install-step-content">
+          <h3>Docker Compose (Full Observability Stack)</h3>
+          <p>Start Haribon with Loki, Promtail, and Grafana in one command.</p>
+          <div class="code-block">
+            <span class="cmd">docker compose</span> -f docker-compose.observability.yml up -d
+          </div>
+          <p style="margin-top:12px">This starts Haribon on port 4444 and three backend services on ports 4441-4443, plus the full Grafana observability stack.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" style="padding-top:0">
+    <div class="section-header">
+      <h2>Configuration File</h2>
+      <p>Create a <code>haribon-config.yml</code> in your project root.</p>
+    </div>
+    <div class="page-content">
+      <div class="code-block">
+        <span class="comment"># haribon-config.yml</span><br>
+        host: <span class="string">"0.0.0.0"</span><br>
+        port: <span class="string">4444</span><br><br>
+        logging: <span class="keyword">true</span><br><br>
+        backends:<br>
+          &nbsp;&nbsp;- url: <span class="string">"http://localhost:4441"</span><br>
+          &nbsp;&nbsp;- url: <span class="string">"http://localhost:4442"</span><br>
+          &nbsp;&nbsp;- url: <span class="string">"http://localhost:4443"</span>
+      </div>
+      <p>You can override <code>host</code> and <code>port</code> via environment variables <code>HARIBON_HOST</code> and <code>HARIBON_PORT</code>.</p>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <h3>Haribon</h3>
+        <p>Traffic distribution made simple. Health checks, observability, and zero complexity.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <a href="about.html">About</a>
+        <a href="features.html">Features</a>
+        <a href="installation.html">Installation</a>
+        <a href="usage.html">Usage</a>
+      </div>
+      <div class="footer-col">
+        <h4>Resources</h4>
+        <a href="https://github.com/marcuwynu23/haribon" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/marcuwynu23/haribon/releases" target="_blank" rel="noopener">Releases</a>
+        <a href="https://github.com/marcuwynu23/haribon/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a>
+      </div>
+      <div class="footer-col">
+        <h4>Legal</h4>
+        <a href="https://github.com/marcuwynu23/haribon/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      &copy; 2026 Haribon. Released under the MIT License.
+    </div>
+  </footer>
+
+  <script>
+    function openDrawer() {
+      document.getElementById('drawer').classList.add('open');
+      document.getElementById('drawer-overlay').classList.add('open');
+    }
+
+    function closeDrawer() {
+      document.getElementById('drawer').classList.remove('open');
+      document.getElementById('drawer-overlay').classList.remove('open');
+    }
+  </script>
+</body>
+</html>
