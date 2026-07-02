@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Haribon distributes traffic across your backend services with zero complexity. Round-robin routing, health checks, and observability in a single binary.">
+  <title>Haribon — Traffic Distribution Made Simple</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <header class="header">
+    <div class="header-inner">
+      <a href="/" class="logo">
+        Haribon
+        <span class="logo-tagline">Load Balancer</span>
+      </a>
+      <nav class="nav">
+        <a href="/" class="active">Home</a>
+        <a href="about.html">About</a>
+        <a href="features.html">Features</a>
+        <a href="installation.html">Install</a>
+        <a href="usage.html">Usage</a>
+      </nav>
+      <button class="hamburger" aria-label="Open navigation menu" onclick="openDrawer()">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 12h18M3 6h18M3 18h18"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawer()"></div>
+  <div class="drawer" id="drawer">
+    <button class="drawer-close" aria-label="Close navigation menu" onclick="closeDrawer()">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M18 6L6 18M6 6l12 12"/>
+      </svg>
+    </button>
+    <nav class="drawer-nav">
+      <a href="/" onclick="closeDrawer()">Home</a>
+      <a href="about.html" onclick="closeDrawer()">About</a>
+      <a href="features.html" onclick="closeDrawer()">Features</a>
+      <a href="installation.html" onclick="closeDrawer()">Install</a>
+      <a href="usage.html" onclick="closeDrawer()">Usage</a>
+    </nav>
+  </div>
+
+  <section class="hero">
+    <canvas id="hero-canvas"></canvas>
+    <div class="hero-content">
+      <h1>Ship with Confidence.<br><span>Balance with Ease.</span></h1>
+      <p>Haribon distributes traffic across your backend services so you can focus on building features, not infrastructure. Round-robin routing, health-aware balancing, and full observability — all in a single binary.</p>
+      <div class="hero-actions">
+        <a href="installation.html" class="btn btn-primary">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+          </svg>
+          Get Started
+        </a>
+        <a href="https://github.com/marcuwynu23/haribon" class="btn btn-secondary" target="_blank" rel="noopener">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+          GitHub
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <h3>Haribon</h3>
+        <p>Traffic distribution made simple. Health checks, observability, and zero complexity.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <a href="about.html">About</a>
+        <a href="features.html">Features</a>
+        <a href="installation.html">Installation</a>
+        <a href="usage.html">Usage</a>
+      </div>
+      <div class="footer-col">
+        <h4>Resources</h4>
+        <a href="https://github.com/marcuwynu23/haribon" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/marcuwynu23/haribon/releases" target="_blank" rel="noopener">Releases</a>
+        <a href="https://github.com/marcuwynu23/haribon/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a>
+      </div>
+      <div class="footer-col">
+        <h4>Legal</h4>
+        <a href="https://github.com/marcuwynu23/haribon/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      &copy; 2026 Haribon. Released under the MIT License.
+    </div>
+  </footer>
+
+  <script>
+    function openDrawer() {
+      document.getElementById('drawer').classList.add('open');
+      document.getElementById('drawer-overlay').classList.add('open');
+    }
+
+    function closeDrawer() {
+      document.getElementById('drawer').classList.remove('open');
+      document.getElementById('drawer-overlay').classList.remove('open');
+    }
+
+    const canvas = document.getElementById('hero-canvas');
+    const ctx = canvas.getContext('2d');
+    let hexagons = [];
+    let animId;
+
+    function resize() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+
+    function createHexagons() {
+      hexagons = [];
+      const count = Math.floor((canvas.width * canvas.height) / 30000);
+      for (let i = 0; i < count; i++) {
+        hexagons.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          size: 6 + Math.random() * 14,
+          speed: 0.08 + Math.random() * 0.2,
+          opacity: 0.12 + Math.random() * 0.15,
+          offset: Math.random() * Math.PI * 2,
+        });
+      }
+    }
+
+    function drawHexagon(x, y, size, opacity) {
+      ctx.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const angle = (Math.PI / 3) * i - Math.PI / 6;
+        const px = x + size * Math.cos(angle);
+        const py = y + size * Math.sin(angle);
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      ctx.strokeStyle = `rgba(239, 68, 68, ${opacity})`;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+
+    function animate() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const time = Date.now() / 1000;
+      for (const h of hexagons) {
+        const floatY = Math.sin(time * h.speed + h.offset) * 6;
+        drawHexagon(h.x, h.y + floatY, h.size, h.opacity);
+      }
+      animId = requestAnimationFrame(animate);
+    }
+
+    window.addEventListener('resize', () => {
+      resize();
+      createHexagons();
+    });
+
+    resize();
+    createHexagons();
+    animate();
+  </script>
+</body>
+</html>
