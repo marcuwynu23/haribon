@@ -1,0 +1,12 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -o ./tmp/main.exe ./cli"
+  entrypoint = "./tmp/main.exe"
+  args_bin = ["start", "--config", "haribon-config.yml"]
+  include_ext = ["go", "yaml", "yml"]
+  exclude_dir = ["tmp", "dist", "releases", "docs", "docker-compose", ".github"]
+
+[log]
+  time = false
