@@ -12,6 +12,8 @@
 Haribon is a lightweight Go-based layer 7 (application‑layer) load balancer designed for simplicity, observability, and production readiness.
 It supports round-robin routing, health-aware balancing, structured logging, and Loki/Promtail integration.
 
+> **Vision:** serve multiple applications/hosts from a single Haribon binary with high-scale L7 HTTP performance — see the [roadmap](#roadmap) (issues [#1](https://github.com/marcuwynu23/haribon/issues/1)–[#10](https://github.com/marcuwynu23/haribon/issues/10)).
+
 ---
 
 ## Features
@@ -53,6 +55,11 @@ backends:
   - url: "http://localhost:4442"
   - url: "http://localhost:4443"
 ```
+
+> Today Haribon serves **one** frontend (one `host:port`) and **one** backend pool per process.
+> Serving multiple applications/hosts from a single binary (virtual hosts, multi-frontend listeners)
+> with high-scale L7 performance is tracked in
+> [#10](https://github.com/marcuwynu23/haribon/issues/10) — the flat config above will keep working unchanged.
 
 ---
 
@@ -231,12 +238,20 @@ go test ./...
 
 ## Roadmap
 
-- Active health check scheduler
-- Retry policy per backend
-- Circuit breaker
-- Metrics endpoint (/metrics)
-- Prometheus integration
-- Weighted load balancing
+Tracked as GitHub issues — pick one up and link your PR with `Closes #<n>`:
+
+| # | Focus | Issue |
+|---|-------|-------|
+| 1 | Enterprise hardening: graceful shutdown, `/healthz` + `/readyz`, `haribon check` | [#1](https://github.com/marcuwynu23/haribon/issues/1) |
+| 2 | High-traffic resilience: active health checks, retry, circuit breaker, weighted LB | [#2](https://github.com/marcuwynu23/haribon/issues/2) |
+| 3 | Pluggable log exporting: Fluent Bit, Loki, Elasticsearch | [#3](https://github.com/marcuwynu23/haribon/issues/3) |
+| 4 | Management UI + admin API | [#4](https://github.com/marcuwynu23/haribon/issues/4) |
+| 5 | Zero-downtime ops: hot-reload, auto-discovery, JSON schema | [#5](https://github.com/marcuwynu23/haribon/issues/5) |
+| 6 | Clustering / HA: replicated Haribon group with gossip | [#6](https://github.com/marcuwynu23/haribon/issues/6) |
+| 7 | TLS termination, request tracing, rate limiting | [#7](https://github.com/marcuwynu23/haribon/issues/7) |
+| 8 | Full observability: Prometheus metrics, OpenTelemetry tracing, Grafana | [#8](https://github.com/marcuwynu23/haribon/issues/8) |
+| 9 | UI Observability section: charts, trace lookup, log tail | [#9](https://github.com/marcuwynu23/haribon/issues/9) |
+| 10 | Multi-host serving (virtual hosts) + high-scale L7 performance | [#10](https://github.com/marcuwynu23/haribon/issues/10) |
 
 ---
 
