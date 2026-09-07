@@ -80,6 +80,35 @@ backends:
 
 ---
 
+## Commands
+
+| Command | Description | Exit code |
+|---------|-------------|-----------|
+| `haribon start --config <file>` | Start the load balancer | 0 ok / 2 bind error |
+| `haribon check --config <file>` | Validate config, print backends, exit | 0 ok / 1 error |
+| `haribon version` | Print version | 0 |
+| `haribon --help` | Print usage | 0 |
+
+### Config validation (CI)
+
+```bash
+# In your CI pipeline — fails build on bad config before deployment
+haribon check --config haribon-config.yml
+# ok: 3 backend(s), probes /healthz /readyz enabled
+#   [0] http://localhost:4441
+#   [1] http://localhost:4442
+#   [2] http://localhost:4443
+```
+
+### Health probes
+
+```bash
+curl -i localhost:4444/healthz   # 200 always (liveness)
+curl -i localhost:4444/readyz    # 200 if >=1 healthy backend, 503 otherwise
+```
+
+---
+
 ## Load Balancing Behavior
 
 - Round-robin selection
