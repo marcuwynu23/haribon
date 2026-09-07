@@ -49,6 +49,42 @@ func TestLoad_MalformedYAML(t *testing.T) {
 	}
 }
 
+func TestLoad_NewFields_YAML(t *testing.T) {
+	yaml := `
+host: "0.0.0.0"
+port: 4444
+balancer:
+  strategy: weighted_round_robin
+health:
+  enabled: true
+  interval_sec: 5
+retry:
+  max_retries: 2
+breaker:
+  failure_threshold: 3
+  cooldown_sec: 15
+backends:
+  - url: "http://localhost:4441"
+    weight: 2
+  - url: "http://localhost:4442"
+    weight: 1
+`
+	path := writeTempYAML(t, yaml)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Balancer.Strategy != "weighted_round_robin" {
+		t.Fatalf("strategy: %s", cfg.Balancer.Strategy)
+	}
+	if cfg.Retry.MaxRetries != 2 {
+		t.Fatalf("max_retries: %d", cfg.Retry.MaxRetries)
+	}
+	if cfg.Backends[0].Weight != 2 {
+		t.Fatalf("weight: %d", cfg.Backends[0].Weight)
+	}
+}
+
 // ---------- Validate ----------
 
 func TestValidate_OK(t *testing.T) {
@@ -111,6 +147,53 @@ func TestValidate_HTTPSSchemeAllowed(t *testing.T) {
 	}
 	if err := config.Validate(cfg); err != nil {
 		t.Fatalf("https scheme should be valid, got %v", err)
+	}
+}
+
+// ---------- Defaults ----------
+
+func TestDefaults_FillsZeroValues(t *testing.T) {
+	cfg := config.Config{
+		Backends: []config.Backend{{Host: "http://localhost:4441"}},
+	}
+	config.Defaults(&cfg)
+
+	if cfg.Balancer.Strategy != "round_robin" {
+		t.Fatalf("default strategy: %s", cfg.Balancer.Strategy)
+	}
+	if cfg.Health.IntervalSec != 10 {
+		t.Fatalf("default interval: %d", cfg.Health.IntervalSec)
+	}
+	if cfg.Health.TimeoutSec != 2 {
+		t.Fatalf("default timeout: %d", cfg.Health.TimeoutSec)
+	}
+	if cfg.Health.Path != "/" {
+		t.Fatalf("default path: %s", cfg.Health.Path)
+	}
+	if cfg.Retry.MaxRetries != 1 {
+		t.Fatalf("default max_retries: %d", cfg.Retry.MaxRetries)
+	}
+	if cfg.Breaker.FailureThreshold != 5 {
+		t.Fatalf("default failure_threshold: %d", cfg.Breaker.FailureThreshold)
+	}
+	if cfg.Breaker.CooldownSec != 30 {
+		t.Fatalf("default cooldown: %d", cfg.Breaker.CooldownSec)
+	}
+}
+
+func TestDefaults_DoesNotOverrideSetValues(t *testing.T) {
+	cfg := config.Config{
+		Backends: []config.Backend{{Host: "http://localhost:4441"}},
+		Balancer: config.BalancerConfig{Strategy: "least_connections"},
+		Retry:    config.RetryConfig{MaxRetries: 3},
+	}
+	config.Defaults(&cfg)
+
+	if cfg.Balancer.Strategy != "least_connections" {
+		t.Fatalf("should not override strategy: %s", cfg.Balancer.Strategy)
+	}
+	if cfg.Retry.MaxRetries != 3 {
+		t.Fatalf("should not override max_retries: %d", cfg.Retry.MaxRetries)
 	}
 }
 
