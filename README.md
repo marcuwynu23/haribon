@@ -18,13 +18,22 @@ It supports round-robin routing, health-aware balancing, structured logging, and
 
 ## Features
 
-- Layer 7 (HTTP) load balancing
-- Round-robin load balancing
+- Layer 7 (HTTP) load balancing
+- Round-robin, weighted round-robin, and least-connections balancing
 - Health-aware routing (skip unhealthy backends)
+- Active health-check scheduler (background per-backend probes)
+- Per-backend circuit breaker (closed / open / half-open FSM)
+- Retry policy on idempotent methods (GET, HEAD, PUT, DELETE) -- X-Haribon-Retries header
 - Structured JSON logging (Loki-ready)
 - Promtail-compatible log output
 - Environment variable overrides
-- Safe HTTP reverse proxying
+- Safe HTTP reverse proxying with hop-by-hop header stripping
+- Liveness probe GET /healthz -- always 200
+- Readiness probe GET /readyz -- 200 if >=1 healthy backend, 503 otherwise
+- GET /metrics -- Prometheus-format counters (requests, retries, breaker state, backend health)
+- Graceful shutdown on SIGINT/SIGTERM with configurable drain timeout
+- haribon check --config -- validate config in CI, exit 0/1
+- haribon version -- print version (injected via ldflags)
 - Automatic fallback logging (stdout if file fails)
 - Configurable log file creation and directory auto-creation
 
