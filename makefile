@@ -3,7 +3,7 @@
 # Safe version fallback (no tags = dev)
 VERSION := $(shell git describe --tags --abbrev=0 2>/dev/null || echo dev)
 
-SRC := cli/main.go
+SRC := ./cli
 
 # Supported platforms and architectures
 PLATFORMS := windows linux
@@ -13,7 +13,7 @@ dev:
 	air
 
 start:
-	go run $(SRC)
+	go run $(SRC) start --config haribon-config.yml
 
 build:
 	@mkdir -p bin
@@ -48,4 +48,5 @@ clean:
 	rm -rf releases/*.tar.gz bin
 
 test:
-	go test ./...
+	go test ./... -count=1 -coverprofile=coverage.out
+	go tool cover -func coverage.out
