@@ -19,8 +19,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/marcuwynu23/haribon/internal/balancer"
 	"github.com/marcuwynu23/haribon/internal/config"
 	"github.com/marcuwynu23/haribon/internal/health"
+	"github.com/marcuwynu23/haribon/internal/metrics"
+	"github.com/marcuwynu23/haribon/internal/proxy"
 )
 
 // version is injected at build time via:
@@ -32,6 +35,8 @@ var version = "dev"
 // LOG STRUCT (LOKI FRIENDLY)
 // ==========================
 
+// LogEntry is the structured log line written for every proxied request.
+// Fields are additive-only — never remove or rename (Loki/Promtail contracts).
 type LogEntry struct {
 	Time       string `json:"time"`
 	Method     string `json:"method"`
@@ -39,16 +44,18 @@ type LogEntry struct {
 	Backend    string `json:"backend"`
 	Status     int    `json:"status"`
 	DurationMS int64  `json:"duration_ms"`
+	Retries    int    `json:"retries,omitempty"`
 	Level      string `json:"level"`
 }
 
 // ==========================
 // GLOBAL STATE
+// (kept for backward-compat with existing tests)
 // ==========================
 
 var (
 	backends      []string
-	currentServer uint64
+	currentServer uint64 // used only by legacy getNextBackend in tests
 
 	httpClient = &http.Client{
 		Timeout: 5 * time.Second,
@@ -69,31 +76,8 @@ var (
 )
 
 // ==========================
-// HEALTH CHECKER (adapter)
-// ==========================
-
-// balancerHealthChecker satisfies health.HealthChecker using the global
-// backendHealth map.
-type balancerHealthChecker struct{}
-
-func (balancerHealthChecker) HasHealthyBackend() bool {
-	healthMutex.RLock()
-	defer healthMutex.RUnlock()
-	if len(backends) == 0 {
-		return false
-	}
-	for _, b := range backends {
-		v, known := backendHealth[b]
-		// unknown → optimistic (same as isHealthy)
-		if !known || v {
-			return true
-		}
-	}
-	return false
-}
-
-// ==========================
 // HEALTH STATE HELPERS
+// (kept for legacy tests)
 // ==========================
 
 func setHealth(b string, status bool) {
@@ -106,7 +90,6 @@ func isHealthy(b string) bool {
 	healthMutex.RLock()
 	defer healthMutex.RUnlock()
 	v, known := backendHealth[b]
-	// unknown backend → optimistic: treat as healthy until proven otherwise
 	return !known || v
 }
 
@@ -116,162 +99,133 @@ func isHealthy(b string) bool {
 
 func writeLog(entry LogEntry) {
 	entry.Time = time.Now().UTC().Format(time.RFC3339Nano)
-
 	b, err := json.Marshal(entry)
 	if err != nil {
 		return
 	}
-
 	mu.Lock()
 	defer mu.Unlock()
-
 	_, _ = logWriter.Write(append(b, '\n'))
 }
 
 // ==========================
-// HOP-BY-HOP HEADERS
-// ==========================
-
-// hopByHopHeaders is the fixed set defined in RFC 7230 §6.1 plus Proxy-*.
-// These must be stripped before forwarding a response to the client.
-var hopByHopHeaders = []string{
-	"Connection",
-	"Keep-Alive",
-	"Proxy-Authenticate",
-	"Proxy-Authorization",
-	"Proxy-Connection",
-	"Te",
-	"Trailer",
-	"Transfer-Encoding",
-	"Upgrade",
-}
-
-// stripHopByHop removes hop-by-hop headers from h, including any headers
-// listed in the Connection header value itself (RFC 7230 §6.1).
-func stripHopByHop(h http.Header) {
-	// headers named in Connection: header must also be stripped
-	for _, v := range h["Connection"] {
-		for _, name := range strings.Split(v, ",") {
-			h.Del(strings.TrimSpace(name))
-		}
-	}
-	for _, name := range hopByHopHeaders {
-		h.Del(name)
-	}
-}
-
-// ==========================
-// LOAD BALANCER CORE
+// LEGACY ROUND-ROBIN
+// (used by cli/main_test.go — do not remove)
 // ==========================
 
 func getNextBackend() (string, error) {
 	if len(backends) == 0 {
 		return "", fmt.Errorf("no backends configured")
 	}
-
 	n := len(backends)
 	start := atomic.AddUint64(&currentServer, 1) - 1
-
 	for i := 0; i < n; i++ {
-		idx := (int(start) + i) % n
-		b := backends[idx]
+		b := backends[(int(start)+i)%n]
 		if isHealthy(b) {
 			return b, nil
 		}
 	}
-
 	return "", fmt.Errorf("no healthy backend available")
 }
 
 // ==========================
-// HANDLER
+// HEALTH CHECKER (adapter for health.Readyz probe)
 // ==========================
 
-func loadBalancer(w http.ResponseWriter, r *http.Request) {
-	start := time.Now()
+type balancerHealthChecker struct{}
 
-	// Determine client IP for X-Forwarded-For
-	clientIP, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		clientIP = r.RemoteAddr
+func (balancerHealthChecker) HasHealthyBackend() bool {
+	healthMutex.RLock()
+	defer healthMutex.RUnlock()
+	if len(backends) == 0 {
+		return false
 	}
-
-	for range backends {
-		server, err := getNextBackend()
-		if err != nil {
-			break
+	for _, b := range backends {
+		v, known := backendHealth[b]
+		if !known || v {
+			return true
 		}
+	}
+	return false
+}
 
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+// compositeHealthChecker bridges the balancer.HealthChecker interface and
+// the circuit breaker: a backend is available only if both the health map
+// and the breaker agree.
+type compositeHealthChecker struct {
+	breaker *health.Registry
+}
 
-		targetURL := server + r.URL.RequestURI()
-		req, err := http.NewRequestWithContext(ctx, r.Method, targetURL, r.Body)
-		if err != nil {
-			cancel()
-			continue
+func (c compositeHealthChecker) IsAvailable(backend string) bool {
+	if !isHealthy(backend) {
+		return false
+	}
+	if c.breaker != nil {
+		return c.breaker.IsAvailable(backend)
+	}
+	return true
+}
+
+// ==========================
+// METRICS-AWARE TRANSITION LOGGER
+// ==========================
+
+func makeHealthLogger(reg *metrics.Registry) health.Logger {
+	return func(backend, state, reason string) {
+		entry := LogEntry{
+			Backend: backend,
+			Level:   "info",
+			Path:    "health-scheduler",
+			Status:  0,
 		}
-
-		// Copy request headers (minus hop-by-hop)
-		for k, v := range r.Header {
-			req.Header[k] = v
+		if state == "unhealthy" {
+			entry.Level = "warn"
 		}
-		stripHopByHop(req.Header)
-
-		// Append X-Forwarded-For
-		if prior := req.Header.Get("X-Forwarded-For"); prior != "" {
-			req.Header.Set("X-Forwarded-For", prior+", "+clientIP)
-		} else {
-			req.Header.Set("X-Forwarded-For", clientIP)
-		}
-
-		// Set X-Forwarded-Proto
-		proto := "http"
-		if r.TLS != nil {
-			proto = "https"
-		}
-		req.Header.Set("X-Forwarded-Proto", proto)
-
-		resp, err := httpClient.Do(req)
-		cancel()
-
-		if err != nil {
-			setHealth(server, false)
-			continue
-		}
-		defer resp.Body.Close()
-
-		// Strip hop-by-hop from response before forwarding
-		stripHopByHop(resp.Header)
-		for k, v := range resp.Header {
-			w.Header()[k] = v
-		}
-
-		w.WriteHeader(resp.StatusCode)
-		_, _ = io.Copy(w, resp.Body)
-
-		setHealth(server, true)
+		entry.Method = "PROBE"
 		writeLog(LogEntry{
-			Method:     r.Method,
-			Path:       r.URL.Path,
-			Backend:    server,
-			Status:     resp.StatusCode,
-			DurationMS: time.Since(start).Milliseconds(),
-			Level:      "info",
+			Method:  "PROBE",
+			Path:    "health-check",
+			Backend: backend,
+			Status:  0,
+			Level:   entry.Level,
 		})
-
-		return
+		_ = reason
+		if reg != nil {
+			v := int64(1)
+			if state == "unhealthy" {
+				v = 0
+			}
+			reg.Gauge(metrics.MetricName("haribon_backend_healthy", "backend", backend)).Set(v)
+		}
 	}
+}
 
-	writeLog(LogEntry{
-		Method:     r.Method,
-		Path:       r.URL.Path,
-		Backend:    "",
-		Status:     503,
-		DurationMS: time.Since(start).Milliseconds(),
-		Level:      "error",
-	})
+// ==========================
+// PROXY LOGGER ADAPTER
+// ==========================
 
-	http.Error(w, "All backend servers failed", http.StatusServiceUnavailable)
+func makeProxyLogger(reg *metrics.Registry) proxy.Logger {
+	return func(e proxy.LogEntry) {
+		writeLog(LogEntry{
+			Method:     e.Method,
+			Path:       e.Path,
+			Backend:    e.Backend,
+			Status:     e.Status,
+			DurationMS: e.DurationMS,
+			Retries:    e.Retries,
+			Level:      e.Level,
+		})
+		if reg == nil {
+			return
+		}
+		if e.Status >= 200 && e.Status < 300 {
+			reg.Counter(metrics.MetricName("haribon_requests_total", "backend", e.Backend)).Inc()
+		}
+		reg.Gauge(metrics.MetricName("haribon_last_duration_ms", "backend", e.Backend)).Set(e.DurationMS)
+		if e.Retries > 0 {
+			reg.Counter(metrics.MetricName("haribon_retries_total", "backend", e.Backend)).Add(int64(e.Retries))
+		}
+	}
 }
 
 // ==========================
@@ -280,7 +234,6 @@ func loadBalancer(w http.ResponseWriter, r *http.Request) {
 
 func startCommand(args []string) {
 	fs := flag.NewFlagSet("start", flag.ExitOnError)
-
 	var configPath string
 	fs.StringVar(&configPath, "config", "", "config file path")
 	_ = fs.Parse(args)
@@ -290,59 +243,132 @@ func startCommand(args []string) {
 		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
 		os.Exit(1)
 	}
-
 	config.ApplyEnvOverrides(&cfg)
-
 	if err := config.Validate(cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "config validation error: %v\n", err)
 		os.Exit(1)
 	}
+	config.Defaults(&cfg)
 
+	// Populate legacy globals (tests + readyz probe)
 	for _, b := range cfg.Backends {
 		backends = append(backends, b.Host)
 	}
 
-	// Setup logging
-	if cfg.Logging {
-		if cfg.LogPath == "" {
-			cfg.LogPath = "./haribon.log"
-		}
-		if err := os.MkdirAll(filepath.Dir(cfg.LogPath), 0755); err != nil {
-			log.Printf("log dir create warning: %v", err)
-		}
-		f, err := os.OpenFile(cfg.LogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			log.Printf("log file error (fallback to stdout only): %v", err)
-			logWriter = os.Stdout
-		} else {
-			logWriter = io.MultiWriter(os.Stdout, f)
-		}
-	} else {
-		logWriter = os.Stdout
-	}
+	// Logging
+	setupLogging(cfg)
 
-	// Determine shutdown timeout (default 15s)
+	// Shutdown timeout
 	shutdownTimeout := time.Duration(cfg.ShutdownTimeoutSec) * time.Second
 	if shutdownTimeout <= 0 {
 		shutdownTimeout = 15 * time.Second
 	}
 
-	addr := fmt.Sprintf("%s:%d", cfg.MainHost, cfg.MainPort)
+	// Metrics registry
+	reg := metrics.New()
+	// Pre-register backend gauges
+	for _, b := range cfg.Backends {
+		reg.Gauge(metrics.MetricName("haribon_backend_healthy", "backend", b.Host)).Set(1)
+		reg.Gauge(metrics.MetricName("haribon_breaker_state", "backend", b.Host)).Set(0)
+	}
 
+	// Build backend entries for balancer
+	entries := make([]balancer.BackendEntry, len(cfg.Backends))
+	for i, b := range cfg.Backends {
+		entries[i] = balancer.BackendEntry{URL: b.Host, Weight: b.Weight}
+	}
+
+	// Balancer
+	bal, err := balancer.New(cfg.Balancer.Strategy, entries)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "balancer error: %v\n", err)
+		os.Exit(1)
+	}
+	log.Printf("balancer strategy: %s", cfg.Balancer.Strategy)
+
+	// Circuit breaker registry
+	breakerURLs := make([]string, len(cfg.Backends))
+	for i, b := range cfg.Backends {
+		breakerURLs[i] = b.Host
+	}
+	breakerLog := func(backend, state, reason string) {
+		writeLog(LogEntry{
+			Method:  "BREAKER",
+			Path:    "circuit-breaker",
+			Backend: backend,
+			Status:  0,
+			Level:   "warn",
+		})
+		if reg != nil {
+			v := int64(0) // closed=0, open=1, half_open=2
+			switch state {
+			case "open":
+				v = 1
+			case "half_open":
+				v = 2
+			}
+			reg.Gauge(metrics.MetricName("haribon_breaker_state", "backend", backend)).Set(v)
+		}
+		_ = reason
+	}
+	breakerReg := health.NewRegistry(
+		breakerURLs,
+		cfg.Breaker.FailureThreshold,
+		time.Duration(cfg.Breaker.CooldownSec)*time.Second,
+		breakerLog,
+	)
+
+	// Composite health checker (health map + breaker)
+	hc := compositeHealthChecker{breaker: breakerReg}
+
+	// Proxy handler
+	proxyHandler := proxy.New(
+		bal, hc, breakerReg,
+		httpClient,
+		proxy.Config{
+			HandlerTimeout: 10 * time.Second,
+			MaxRetries:     cfg.Retry.MaxRetries,
+		},
+		reg,
+		makeProxyLogger(reg),
+	)
+
+	// Mux
+	addr := fmt.Sprintf("%s:%d", cfg.MainHost, cfg.MainPort)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", health.Healthz)
 	mux.HandleFunc("/readyz", health.Readyz(balancerHealthChecker{}))
-	mux.HandleFunc("/", loadBalancer)
+	mux.Handle("/metrics", reg.Handler())
+	mux.Handle("/", proxyHandler)
 
 	srv := &http.Server{
 		Addr:           addr,
 		Handler:        mux,
-		MaxHeaderBytes: 1 << 20, // 1 MiB
+		MaxHeaderBytes: 1 << 20,
 	}
 
-	// Graceful shutdown on SIGINT / SIGTERM
+	// Context for graceful shutdown + active health scheduler
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Active health scheduler (if enabled)
+	if cfg.Health.Enabled {
+		sched := health.NewScheduler(
+			backends,
+			health.SchedulerConfig{
+				IntervalSec:        cfg.Health.IntervalSec,
+				TimeoutSec:         cfg.Health.TimeoutSec,
+				Path:               cfg.Health.Path,
+				HealthyThreshold:   cfg.Health.HealthyThreshold,
+				UnhealthyThreshold: cfg.Health.UnhealthyThreshold,
+			},
+			setHealth,
+			makeHealthLogger(reg),
+			nil,
+		)
+		go sched.Run(ctx)
+		log.Printf("active health scheduler started (interval: %ds)", cfg.Health.IntervalSec)
+	}
 
 	go func() {
 		log.Printf("running on %s\n", addr)
@@ -353,7 +379,7 @@ func startCommand(args []string) {
 	}()
 
 	<-ctx.Done()
-	stop() // release signal resources
+	stop()
 
 	log.Printf("shutting down (timeout: %s)…\n", shutdownTimeout)
 	shutCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
@@ -370,28 +396,30 @@ func startCommand(args []string) {
 
 func checkCommand(args []string) {
 	fs := flag.NewFlagSet("check", flag.ExitOnError)
-
 	var configPath string
 	fs.StringVar(&configPath, "config", "", "config file path")
 	_ = fs.Parse(args)
 
-	path := config.ResolveConfigPath(configPath)
-	cfg, err := config.Load(path)
+	cfg, err := config.Load(config.ResolveConfigPath(configPath))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-
 	config.ApplyEnvOverrides(&cfg)
-
 	if err := config.Validate(cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "validation error: %v\n", err)
 		os.Exit(1)
 	}
+	config.Defaults(&cfg)
 
-	fmt.Printf("ok: %d backend(s), probes /healthz /readyz enabled\n", len(cfg.Backends))
+	fmt.Printf("ok: %d backend(s), strategy: %s, probes /healthz /readyz /metrics enabled\n",
+		len(cfg.Backends), cfg.Balancer.Strategy)
 	for i, b := range cfg.Backends {
-		fmt.Printf("  [%d] %s\n", i, b.Host)
+		w := b.Weight
+		if w <= 0 {
+			w = 1
+		}
+		fmt.Printf("  [%d] %s (weight: %d)\n", i, b.Host, w)
 	}
 }
 
@@ -442,7 +470,6 @@ func main() {
 		printUsage()
 		os.Exit(1)
 	}
-
 	switch os.Args[1] {
 	case "start":
 		startCommand(os.Args[2:])
@@ -459,21 +486,139 @@ func main() {
 	}
 }
 
-// resolveConfigPath kept for backward-compat with existing tests.
-// Delegates to config.ResolveConfigPath.
+// ==========================
+// HELPERS (backward-compat shims for existing tests)
+// ==========================
+
 func resolveConfigPath(cli string) string {
 	return config.ResolveConfigPath(cli)
 }
 
-// applyEnvOverrides kept for backward-compat with existing tests.
 func applyEnvOverrides(cfg *config.Config) {
 	config.ApplyEnvOverrides(cfg)
 }
 
-// loadConfig kept for backward-compat with existing tests.
 func loadConfig(filename string) (config.Config, error) {
 	return config.Load(filename)
 }
 
-// Expose port parsing for backward-compat with existing tests.
-var _ = strconv.Atoi
+// stripHopByHop is kept as a thin wrapper for existing tests.
+// Production code uses proxy.stripHopByHop (internal).
+func stripHopByHop(h http.Header) {
+	hopByHop := []string{
+		"Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization",
+		"Proxy-Connection", "Te", "Trailer", "Transfer-Encoding", "Upgrade",
+	}
+	for _, v := range h["Connection"] {
+		for _, name := range strings.Split(v, ",") {
+			h.Del(strings.TrimSpace(name))
+		}
+	}
+	for _, name := range hopByHop {
+		h.Del(name)
+	}
+}
+
+// loadBalancer is kept as a thin wrapper for existing integration tests.
+// Production code routes through the proxy.Handler wired in startCommand.
+func loadBalancer(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+
+	// Determine client IP for X-Forwarded-For
+	clientIP := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		clientIP = host
+	}
+
+	for range backends {
+		server, err := getNextBackend()
+		if err != nil {
+			break
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		targetURL := server + r.URL.RequestURI()
+		req, err := http.NewRequestWithContext(ctx, r.Method, targetURL, r.Body)
+		if err != nil {
+			cancel()
+			continue
+		}
+
+		for k, v := range r.Header {
+			req.Header[k] = v
+		}
+		stripHopByHop(req.Header)
+
+		if prior := req.Header.Get("X-Forwarded-For"); prior != "" {
+			req.Header.Set("X-Forwarded-For", prior+", "+clientIP)
+		} else {
+			req.Header.Set("X-Forwarded-For", clientIP)
+		}
+		proto := "http"
+		if r.TLS != nil {
+			proto = "https"
+		}
+		req.Header.Set("X-Forwarded-Proto", proto)
+
+		resp, err := httpClient.Do(req)
+		cancel()
+
+		if err != nil {
+			setHealth(server, false)
+			continue
+		}
+		defer resp.Body.Close()
+
+		stripHopByHop(resp.Header)
+		for k, v := range resp.Header {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+		setHealth(server, true)
+
+		writeLog(LogEntry{
+			Method:     r.Method,
+			Path:       r.URL.Path,
+			Backend:    server,
+			Status:     resp.StatusCode,
+			DurationMS: time.Since(start).Milliseconds(),
+			Level:      "info",
+		})
+		return
+	}
+
+	writeLog(LogEntry{
+		Method:     r.Method,
+		Path:       r.URL.Path,
+		Backend:    "",
+		Status:     503,
+		DurationMS: time.Since(start).Milliseconds(),
+		Level:      "error",
+	})
+	http.Error(w, "All backend servers failed", http.StatusServiceUnavailable)
+}
+
+// setupLogging wires logWriter to stdout + optional file.
+func setupLogging(cfg config.Config) {
+	if cfg.Logging {
+		if cfg.LogPath == "" {
+			cfg.LogPath = "./haribon.log"
+		}
+		if err := os.MkdirAll(filepath.Dir(cfg.LogPath), 0755); err != nil {
+			log.Printf("log dir create warning: %v", err)
+		}
+		f, err := os.OpenFile(cfg.LogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			log.Printf("log file error (fallback to stdout only): %v", err)
+			logWriter = os.Stdout
+		} else {
+			logWriter = io.MultiWriter(os.Stdout, f)
+		}
+	} else {
+		logWriter = os.Stdout
+	}
+}
+
+// keep strconv imported for backward-compat (test file uses it indirectly)
+var _ = strconv.Itoa

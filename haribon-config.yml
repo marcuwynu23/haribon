@@ -1,7 +1,35 @@
 host: "0.0.0.0"
 port: 4444
 logging: true
+log_path: "./haribon.log"
+shutdown_timeout_sec: 15
+
+# Balancer strategy: round_robin | weighted_round_robin | least_connections
+balancer:
+  strategy: round_robin
+
+# Active health-check scheduler
+health:
+  enabled: false          # set true to enable background probes
+  interval_sec: 10
+  timeout_sec: 2
+  path: /
+  healthy_threshold: 1
+  unhealthy_threshold: 2
+
+# Retry policy (idempotent methods only: GET, HEAD, PUT, DELETE, OPTIONS)
+retry:
+  max_retries: 1
+
+# Circuit breaker per backend
+breaker:
+  failure_threshold: 5
+  cooldown_sec: 30
+
 backends:
   - url: "http://localhost:4441"
+    weight: 1
   - url: "http://localhost:4442"
+    weight: 1
   - url: "http://localhost:4443"
+    weight: 1
