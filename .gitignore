@@ -6,3 +6,5 @@ bin/
 data/
 logs/
 tmp/
+coverage
+coverage.out
