@@ -266,10 +266,10 @@ func TestNew_LeastConn(t *testing.T) {
 	}
 }
 
-func TestNew_Unknown_FallsBackToRR(t *testing.T) {
+func TestNew_Unknown_Error(t *testing.T) {
 	b, err := balancer.New("unknown_strategy", backends("a"))
-	if err != nil || b == nil {
-		t.Fatalf("unknown strategy should fall back to RR: %v", err)
+	if err == nil || b != nil {
+		t.Fatalf("unknown strategy should return error: %v", err)
 	}
 }
 

@@ -22,6 +22,7 @@ var (
 	ErrBadScheme       = errors.New("backend url must use http or https scheme")
 	ErrInvalidPort     = errors.New("port must be between 1 and 65535")
 	ErrEmptyBackendURL = errors.New("backend url must not be empty")
+	ErrUnknownStrategy = errors.New("unknown balancer strategy")
 )
 
 // BalancerConfig controls which algorithm is used.
@@ -104,6 +105,14 @@ func Validate(cfg Config) error {
 	}
 	if cfg.MainPort != 0 && (cfg.MainPort < 1 || cfg.MainPort > 65535) {
 		return fmt.Errorf("port %d: %w", cfg.MainPort, ErrInvalidPort)
+	}
+	if cfg.Balancer.Strategy != "" {
+		switch cfg.Balancer.Strategy {
+		case "round_robin", "weighted_round_robin", "least_connections", "random", "ip_hash":
+			// valid
+		default:
+			return fmt.Errorf("balancer strategy %q: %w", cfg.Balancer.Strategy, ErrUnknownStrategy)
+		}
 	}
 	return nil
 }

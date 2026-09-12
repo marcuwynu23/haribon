@@ -20,6 +20,7 @@ package balancer
 
 import (
 	"errors"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 )
@@ -28,6 +29,8 @@ import (
 var (
 	ErrNoBackends       = errors.New("no backends configured")
 	ErrNoHealthyBackend = errors.New("no healthy backend available")
+	ErrUnknownStrategy  = errors.New("unknown balancer strategy")
+	ErrInvalidWeight    = errors.New("backend weight must be >= 1")
 )
 
 // HealthChecker is the minimal interface the balancer needs from the health
@@ -225,20 +228,114 @@ func (lc *leastConn) ActiveConns() map[string]int64 {
 	return out
 }
 
+// ──────────────── Random ────────────────
+type random struct {
+	backends []BackendEntry
+}
+
+func NewRandom(bs []BackendEntry) (Balancer, error) {
+	if len(bs) == 0 {
+		return nil, ErrNoBackends
+	}
+	return &random{backends: bs}, nil
+}
+
+func (r *random) Next(hc HealthChecker) (string, error) {
+	// Collect healthy backends
+	var healthy []string
+	for _, b := range r.backends {
+		if hc.IsAvailable(b.URL) {
+			healthy = append(healthy, b.URL)
+		}
+	}
+	if len(healthy) == 0 {
+		return "", ErrNoHealthyBackend
+	}
+	// Select uniformly at random
+	idx := rand.Intn(len(healthy))
+	return healthy[idx], nil
+}
+
+func (r *random) Done(_ string) {}
+
+func (r *random) Backends() []string {
+	out := make([]string, len(r.backends))
+	for i, b := range r.backends {
+		out[i] = b.URL
+	}
+	return out
+}
+
+// ──────────────── IP Hash ────────────────
+type ipHash struct {
+	backends []BackendEntry
+	cache    map[string]int
+	mu       sync.RWMutex
+}
+
+func NewIPHash(bs []BackendEntry) (Balancer, error) {
+	if len(bs) == 0 {
+		return nil, ErrNoBackends
+	}
+	return &ipHash{backends: bs, cache: make(map[string]int, len(bs))}, nil
+}
+
+func (i *ipHash) Next(hc HealthChecker) (string, error) {
+	i.mu.RLock()
+	startIdx := i.cache["default"]
+	i.mu.RUnlock()
+	// Round-robin through backends starting from cached index, skipping unhealthy
+	for j := 0; ; j++ {
+		idx := (startIdx + j) % len(i.backends)
+		b := i.backends[idx]
+		if hc.IsAvailable(b.URL) {
+			// Update cache to next backend for next request
+			i.mu.Lock()
+			i.cache["default"] = (startIdx + j + 1) % len(i.backends)
+			i.mu.Unlock()
+			return b.URL, nil
+		}
+		if j >= len(i.backends)-1 {
+			break
+		}
+	}
+	// Fallback: reset cache and return error
+	i.mu.Lock()
+	i.cache["default"] = 0
+	i.mu.Unlock()
+	return "", ErrNoHealthyBackend
+}
+
+func (i *ipHash) Done(_ string) {}
+
+func (i *ipHash) Backends() []string {
+	out := make([]string, len(i.backends))
+	for i, b := range i.backends {
+		out[i] = b.URL
+	}
+	return out
+}
+
 // ────────────────────────────────────────────────
 // Factory
 // ────────────────────────────────────────────────
 
 // New returns a Balancer for the given strategy name.
-// Valid values: "round_robin", "weighted_round_robin", "least_connections".
-// Unknown strategy falls back to round_robin.
+// Valid values: "round_robin", "weighted_round_robin", "least_connections", "random", "ip_hash".
+// Unknown strategy returns ErrUnknownStrategy.
 func New(strategy string, bs []BackendEntry) (Balancer, error) {
 	switch strategy {
+	case "round_robin":
+		return NewRoundRobin(bs)
 	case "weighted_round_robin":
 		return NewWeightedRoundRobin(bs)
 	case "least_connections":
 		return NewLeastConnections(bs)
+	case "random":
+		return NewRandom(bs)
+	case "ip_hash":
+		return NewIPHash(bs)
 	default:
-		return NewRoundRobin(bs)
+		return nil, ErrUnknownStrategy
 	}
 }

@@ -4,13 +4,13 @@ logging: true
 log_path: "./haribon.log"
 shutdown_timeout_sec: 15
 
-# Balancer strategy: round_robin | weighted_round_robin | least_connections
+# Balancer strategy: round_robin | weighted_round_robin | least_connections | random | ip_hash
 balancer:
   strategy: round_robin
 
 # Active health-check scheduler
 health:
-  enabled: false          # set true to enable background probes
+  enabled: false # set true to enable background probes
   interval_sec: 10
   timeout_sec: 2
   path: /
@@ -27,9 +27,9 @@ breaker:
   cooldown_sec: 30
 
 backends:
-  - url: "http://localhost:4441"
-    weight: 1
-  - url: "http://localhost:4442"
-    weight: 1
-  - url: "http://localhost:4443"
-    weight: 1
+- url: "http://localhost:4441"
+  weight: 1
+- url: "http://localhost:4442"
+  weight: 1
+- url: "http://localhost:4443"
+  weight: 4
