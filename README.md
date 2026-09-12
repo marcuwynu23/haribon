@@ -201,7 +201,7 @@ curl http://localhost:4444
 curl http://localhost:4444/index.html
 ```
 
-Requests (including `text/html` frontend assets) are distributed using the configured strategy (default `round_robin`) with health filtering — `Content-Length` is handled correctly to avoid `ERR_CONTENT_LENGTH_MISMATCH`.
+Supports both frontend and backend web servers — requests are distributed using the configured strategy (default `round_robin`) with health filtering.
 
 ---
 
