@@ -222,10 +222,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		req.Header.Set("X-Forwarded-Proto", proto)
 
 		resp, err := h.client.Do(req)
-		cancel()
 		h.bal.Done(server)
 
 		if err != nil {
+			cancel()
 			if h.breaker != nil {
 				h.breaker.RecordFailure(server)
 			}
@@ -235,6 +235,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Retry on 502/503/504 for idempotent methods.
 		if retryableStatus(resp.StatusCode) && idempotentMethod(r.Method) && attempt < maxAttempts-1 {
 			_ = resp.Body.Close()
+			cancel()
 			if h.breaker != nil {
 				h.breaker.RecordFailure(server)
 			}
@@ -248,6 +249,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		stripHopByHop(resp.Header)
+		// Remove Content-Length to let Go handle chunked vs fixed-length correctly;
+		// prevents ERR_CONTENT_LENGTH_MISMATCH when backend used chunked encoding
+		// or when body was buffered for retry.
+		resp.Header.Del("Content-Length")
 		for k, v := range resp.Header {
 			w.Header()[k] = v
 		}
@@ -258,6 +263,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(resp.StatusCode)
 		_, _ = io.Copy(w, resp.Body)
 		_ = resp.Body.Close()
+		cancel()
 
 		h.incCounter(
 			fmt.Sprintf(`haribon_responses_total{backend="%s",code="%d"}`, server, resp.StatusCode),
