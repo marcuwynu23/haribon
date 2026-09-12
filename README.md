@@ -295,4 +295,4 @@ Tracked as GitHub issues — pick one up and link your PR with `Closes #<n>`:
 
 ## License
 
-MIT License
+Apache 2.0 License
