@@ -10,7 +10,7 @@
 </p>
 
 Haribon is a lightweight Go-based layer 7 (application‑layer) load balancer designed for simplicity, observability, and production readiness.
-It supports round-robin routing, health-aware balancing, structured logging, and Loki/Promtail integration.
+It provides **5 pluggable balancing strategies** — round-robin, weighted round-robin, least-connections, random and ip-hash — with health-aware routing, active health checks, per-backend circuit breaker, retry, Prometheus metrics, graceful shutdown and structured JSON logging (Loki/Promtail ready).
 
 > **Vision:** serve multiple applications/hosts from a single Haribon binary with high-scale L7 HTTP performance — see [ROADMAP.md](ROADMAP.md).
 
@@ -18,24 +18,18 @@ It supports round-robin routing, health-aware balancing, structured logging, and
 
 ## Features
 
-- Layer 7 (HTTP) load balancing
-- Round-robin, weighted round-robin, and least-connections balancing
-- Health-aware routing (skip unhealthy backends)
-- Active health-check scheduler (background per-backend probes)
+- Layer 7 (HTTP) load balancing with **5 pluggable strategies**: round-robin, weighted round-robin, least-connections, random, ip-hash (configurable via `balancer.strategy` without code changes)
+- Health-aware routing — skips unhealthy/open-breaker backends, `503` only if none healthy
+- Active health-check scheduler (background per-backend probes with healthy/unhealthy thresholds)
 - Per-backend circuit breaker (closed / open / half-open FSM)
-- Retry policy on idempotent methods (GET, HEAD, PUT, DELETE) -- X-Haribon-Retries header
-- Structured JSON logging (Loki-ready)
-- Promtail-compatible log output
-- Environment variable overrides
-- Safe HTTP reverse proxying with hop-by-hop header stripping
-- Liveness probe GET /healthz -- always 200
-- Readiness probe GET /readyz -- 200 if >=1 healthy backend, 503 otherwise
-- GET /metrics -- Prometheus-format counters (requests, retries, breaker state, backend health)
-- Graceful shutdown on SIGINT/SIGTERM with configurable drain timeout
-- haribon check --config -- validate config in CI, exit 0/1
-- haribon version -- print version (injected via ldflags)
-- Automatic fallback logging (stdout if file fails)
-- Configurable log file creation and directory auto-creation
+- Retry policy on idempotent methods (GET, HEAD, PUT, DELETE, OPTIONS) — `X-Haribon-Retries` header
+- `GET /healthz` liveness — always 200, `GET /readyz` readiness — 200 if ≥1 healthy backend else 503
+- `GET /metrics` — Prometheus-format counters/gauges (requests, retries, breaker state, backend health, active conns, duration)
+- Structured JSON logging (Loki-ready) — fields `time, method, path, backend, status, duration_ms, level` additive-only; file/stdout with auto `MkdirAll` and fallback
+- Pluggable log exporters (`stdout`, `file`, `loki`, `fluentbit`, `elasticsearch`) with `log_format: json|text`
+- Safe HTTP reverse proxying with hop-by-hop stripping, `X-Forwarded-For/Proto` preservation, correct `Content-Length` handling for large HTML/frontend assets
+- Environment variable overrides (`HARIBON_HOST`, `HARIBON_PORT`, `HARIBON_CONFIG`) + `haribon check --config` validation for CI
+- Graceful shutdown on `SIGINT/SIGTERM` with configurable `shutdown_timeout_sec`, `haribon version` via `-ldflags`
 
 ---
 
@@ -56,13 +50,17 @@ go build -o haribon main.go
 ```yaml
 host: "0.0.0.0"
 port: 4444
-
 logging: true
-
+log_path: "./haribon.log"
+balancer:
+  strategy: round_robin # round_robin | weighted_round_robin | least_connections | random | ip_hash
 backends:
   - url: "http://localhost:4441"
+    weight: 1
   - url: "http://localhost:4442"
+    weight: 1
   - url: "http://localhost:4443"
+    weight: 1
 ```
 
 > Today Haribon serves **one** frontend (one `host:port`) and **one** backend pool per process.
@@ -120,10 +118,17 @@ curl -i localhost:4444/readyz    # 200 if >=1 healthy backend, 503 otherwise
 
 ## Load Balancing Behavior
 
-- Round-robin selection
-- Health-aware backend selection
-- Automatic fallback if no healthy backend is available
-- If health data is empty (startup/testing mode), all backends are treated as healthy
+All strategies are health-aware (skip unhealthy/open-breaker) and fall back to `503` only if none healthy; empty health map = all healthy (startup/tests).
+
+| Strategy | Config `balancer.strategy` | Use when |
+|---|---|---|
+| round-robin | `round_robin` (default) | 3 identical backends, fair rotation |
+| weighted round-robin | `weighted_round_robin` | heterogeneous capacity — `backends[].weight` (slots) |
+| least-connections | `least_connections` | uneven/long-lived requests, `ActiveConns()` tracked |
+| random | `random` | stateless uniform fan-out, no stickiness |
+| ip-hash | `ip_hash` | session affinity (best-effort, consistent while pool unchanged) |
+
+Unknown `strategy` → fail-fast at `haribon start`/`check` (`ErrUnknownStrategy`); invalid `weight <1` → validation error.
 
 ---
 
@@ -193,9 +198,10 @@ data/
 
 ```bash
 curl http://localhost:4444
+curl http://localhost:4444/index.html
 ```
 
-Requests are distributed using round-robin scheduling with health filtering.
+Requests (including `text/html` frontend assets) are distributed using the configured strategy (default `round_robin`) with health filtering — `Content-Length` is handled correctly to avoid `ERR_CONTENT_LENGTH_MISMATCH`.
 
 ---
 
