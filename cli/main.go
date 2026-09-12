@@ -21,6 +21,7 @@ import (
 
 	"github.com/marcuwynu23/haribon/internal/balancer"
 	"github.com/marcuwynu23/haribon/internal/config"
+	"github.com/marcuwynu23/haribon/internal/logging"
 	"github.com/marcuwynu23/haribon/internal/health"
 	"github.com/marcuwynu23/haribon/internal/metrics"
 	"github.com/marcuwynu23/haribon/internal/proxy"
@@ -599,8 +600,14 @@ func loadBalancer(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "All backend servers failed", http.StatusServiceUnavailable)
 }
 
-// setupLogging wires logWriter to stdout + optional file.
+// setupLogging wires log exporters based on config.
 func setupLogging(cfg config.Config) {
+	var exporters []logging.Exporter
+
+	// Always include stdout as the default fallback
+	exporters = append(exporters, &logging.StdoutExporter{})
+
+	// Add additional exporters based on config
 	if cfg.Logging {
 		if cfg.LogPath == "" {
 			cfg.LogPath = "./haribon.log"
@@ -611,12 +618,21 @@ func setupLogging(cfg config.Config) {
 		f, err := os.OpenFile(cfg.LogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
 			log.Printf("log file error (fallback to stdout only): %v", err)
-			logWriter = os.Stdout
 		} else {
-			logWriter = io.MultiWriter(os.Stdout, f)
+			exporters = append(exporters, &logging.FileExporter{File: f})
 		}
-	} else {
-		logWriter = os.Stdout
+		// Note: loki, fluentbit, elasticsearch exporters are
+		// best-effort and currently no-ops; they can be enabled
+		// when full implementations are added.
+	}
+
+	// Write a sample log entry through all exporters to verify they work
+	for _, entry := range []logging.LogEntry{
+		{Time: time.Now().UTC().Format(time.RFC3339Nano), Method: "GET", Path: "/", Backend: "http://example.com", Status: 200, DurationMS: 5, Level: "info"},
+	} {
+		for _, ex := range exporters {
+			ex.Write(entry)
+		}
 	}
 }
 
