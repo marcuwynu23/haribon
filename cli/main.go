@@ -625,15 +625,6 @@ func setupLogging(cfg config.Config) {
 		// best-effort and currently no-ops; they can be enabled
 		// when full implementations are added.
 	}
-
-	// Write a sample log entry through all exporters to verify they work
-	for _, entry := range []logging.LogEntry{
-		{Time: time.Now().UTC().Format(time.RFC3339Nano), Method: "GET", Path: "/", Backend: "http://example.com", Status: 200, DurationMS: 5, Level: "info"},
-	} {
-		for _, ex := range exporters {
-			ex.Write(entry)
-		}
-	}
 }
 
 // keep strconv imported for backward-compat (test file uses it indirectly)
