@@ -6,7 +6,7 @@ shutdown_timeout_sec: 15
 
 # Balancer strategy: round_robin | weighted_round_robin | least_connections | random | ip_hash
 balancer:
-  strategy: weighted_round_robin
+  strategy: round_robin
 
 # Active health-check scheduler
 health:
