@@ -20,6 +20,8 @@ package balancer
 
 import (
 	"errors"
+	"fmt"
+	"hash/fnv"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -30,7 +32,9 @@ var (
 	ErrNoBackends       = errors.New("no backends configured")
 	ErrNoHealthyBackend = errors.New("no healthy backend available")
 	ErrUnknownStrategy  = errors.New("unknown balancer strategy")
-	ErrInvalidWeight    = errors.New("backend weight must be >= 1")
+	// ErrInvalidWeight covers a negative weight. Zero is not an error: YAML
+	// omits an unset weight as 0, so 0 means "unset" and is treated as 1.
+	ErrInvalidWeight = errors.New("backend weight must not be negative")
 )
 
 // HealthChecker is the minimal interface the balancer needs from the health
@@ -47,6 +51,27 @@ type Balancer interface {
 	Done(backend string)
 	// Backends returns the configured backend URLs (for logging / readyz).
 	Backends() []string
+}
+
+// IPHash is implemented by balancers that can pin a client to a backend.
+// The proxy type-asserts to this so the Balancer interface stays unchanged for
+// strategies that do not care about the client address.
+type IPHash interface {
+	NextForIP(hc HealthChecker, clientIP string) (string, error)
+}
+
+// ConnsReporter is implemented by balancers that track per-backend active
+// connection counts, so /metrics can expose haribon_active_conns.
+type ConnsReporter interface {
+	ActiveConns() map[string]int64
+}
+
+// ConnsCarrier is implemented by balancers whose per-backend counters must
+// survive a rebuild. Without this, a config reload would reset every count to
+// zero and a backend that is actually busy would look idle, sending it a burst
+// of new traffic.
+type ConnsCarrier interface {
+	CarryOverConns(old Balancer)
 }
 
 // BackendEntry holds URL and weight for a single upstream.
@@ -107,6 +132,8 @@ type weightedRR struct {
 }
 
 // NewWeightedRoundRobin builds a weighted round-robin balancer.
+// A weight of 0 means "unset" and is treated as 1; a negative weight is
+// rejected with ErrInvalidWeight.
 func NewWeightedRoundRobin(bs []BackendEntry) (Balancer, error) {
 	if len(bs) == 0 {
 		return nil, ErrNoBackends
@@ -114,7 +141,10 @@ func NewWeightedRoundRobin(bs []BackendEntry) (Balancer, error) {
 	var slots []string
 	for _, b := range bs {
 		w := b.Weight
-		if w <= 0 {
+		if w < 0 {
+			return nil, fmt.Errorf("%s: %w", b.URL, ErrInvalidWeight)
+		}
+		if w == 0 {
 			w = 1
 		}
 		for j := 0; j < w; j++ {
@@ -228,6 +258,23 @@ func (lc *leastConn) ActiveConns() map[string]int64 {
 	return out
 }
 
+// CarryOverConns copies counters for backends present in both balancers.
+func (lc *leastConn) CarryOverConns(old Balancer) {
+	prev, ok := old.(ConnsReporter)
+	if !ok {
+		return
+	}
+	counts := prev.ActiveConns()
+
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	for url, p := range lc.conns {
+		if n, ok := counts[url]; ok {
+			atomic.StoreInt64(p, n)
+		}
+	}
+}
+
 // ──────────────── Random ────────────────
 type random struct {
 	backends []BackendEntry
@@ -267,42 +314,54 @@ func (r *random) Backends() []string {
 }
 
 // ──────────────── IP Hash ────────────────
+//
+// Pins a client to one backend by hashing its address. The mapping is stable
+// while the backend list is unchanged: a client that hashed to index 2 stays on
+// index 2. When the pool changes size the modulo changes, so a fraction of
+// clients are remapped — that is inherent to modulo hashing and is why the
+// proxy falls forward to the next healthy backend rather than failing.
 type ipHash struct {
 	backends []BackendEntry
-	cache    map[string]int
-	mu       sync.RWMutex
+	counter  uint64
 }
 
 func NewIPHash(bs []BackendEntry) (Balancer, error) {
 	if len(bs) == 0 {
 		return nil, ErrNoBackends
 	}
-	return &ipHash{backends: bs, cache: make(map[string]int, len(bs))}, nil
+	cp := make([]BackendEntry, len(bs))
+	copy(cp, bs)
+	return &ipHash{backends: cp}, nil
 }
 
-func (i *ipHash) Next(hc HealthChecker) (string, error) {
-	i.mu.RLock()
-	startIdx := i.cache["default"]
-	i.mu.RUnlock()
-	// Round-robin through backends starting from cached index, skipping unhealthy
-	for j := 0; ; j++ {
-		idx := (startIdx + j) % len(i.backends)
-		b := i.backends[idx]
+// NextForIP returns the backend a given client address maps to, walking forward
+// if that backend is unavailable.
+func (i *ipHash) NextForIP(hc HealthChecker, clientIP string) (string, error) {
+	n := len(i.backends)
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(clientIP))
+	start := int(h.Sum32() % uint32(n))
+
+	for j := 0; j < n; j++ {
+		b := i.backends[(start+j)%n]
 		if hc.IsAvailable(b.URL) {
-			// Update cache to next backend for next request
-			i.mu.Lock()
-			i.cache["default"] = (startIdx + j + 1) % len(i.backends)
-			i.mu.Unlock()
 			return b.URL, nil
 		}
-		if j >= len(i.backends)-1 {
-			break
+	}
+	return "", ErrNoHealthyBackend
+}
+
+// Next is the fallback used when no client address is available. It rotates
+// round-robin so a caller that cannot supply an address still spreads load.
+func (i *ipHash) Next(hc HealthChecker) (string, error) {
+	n := len(i.backends)
+	start := atomic.AddUint64(&i.counter, 1) - 1
+	for j := 0; j < n; j++ {
+		b := i.backends[(int(start)+j)%n]
+		if hc.IsAvailable(b.URL) {
+			return b.URL, nil
 		}
 	}
-	// Fallback: reset cache and return error
-	i.mu.Lock()
-	i.cache["default"] = 0
-	i.mu.Unlock()
 	return "", ErrNoHealthyBackend
 }
 
@@ -310,8 +369,8 @@ func (i *ipHash) Done(_ string) {}
 
 func (i *ipHash) Backends() []string {
 	out := make([]string, len(i.backends))
-	for i, b := range i.backends {
-		out[i] = b.URL
+	for j, b := range i.backends {
+		out[j] = b.URL
 	}
 	return out
 }
