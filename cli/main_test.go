@@ -383,40 +383,45 @@ func TestProxy_XForwardedProto(t *testing.T) {
 
 func TestHasHealthyBackend_NoBackends(t *testing.T) {
 	resetState()
-	checker := balancerHealthChecker{}
-	if checker.HasHealthyBackend() {
+	cfg := baseConfig()
+	rt := testRuntime(t, cfg, nil)
+	// No rebuild → no engine → no backends → false
+	if rt.sw.HasHealthyBackend() {
 		t.Fatal("should return false with no backends")
 	}
 }
 
 func TestHasHealthyBackend_AllUnknown_ReturnsTrue(t *testing.T) {
 	resetState()
-	backends = []string{"http://a", "http://b"}
-	// health map empty → unknown → optimistic true
-	checker := balancerHealthChecker{}
-	if !checker.HasHealthyBackend() {
+	cfg := baseConfig("http://a", "http://b")
+	rt := testRuntime(t, cfg, nil)
+	rt.rebuild(cfg)
+	// Health map empty → unknown → optimistic true (matches isHealthy default)
+	if !rt.sw.HasHealthyBackend() {
 		t.Fatal("unknown backends should be treated as healthy")
 	}
 }
 
 func TestHasHealthyBackend_AllFalse_ReturnsFalse(t *testing.T) {
 	resetState()
-	backends = []string{"http://a", "http://b"}
+	cfg := baseConfig("http://a", "http://b")
+	rt := testRuntime(t, cfg, nil)
+	rt.rebuild(cfg)
 	setHealth("http://a", false)
 	setHealth("http://b", false)
-	checker := balancerHealthChecker{}
-	if checker.HasHealthyBackend() {
+	if rt.sw.HasHealthyBackend() {
 		t.Fatal("all-unhealthy should return false")
 	}
 }
 
 func TestHasHealthyBackend_OneHealthy_ReturnsTrue(t *testing.T) {
 	resetState()
-	backends = []string{"http://a", "http://b"}
+	cfg := baseConfig("http://a", "http://b")
+	rt := testRuntime(t, cfg, nil)
+	rt.rebuild(cfg)
 	setHealth("http://a", false)
 	setHealth("http://b", true)
-	checker := balancerHealthChecker{}
-	if !checker.HasHealthyBackend() {
+	if !rt.sw.HasHealthyBackend() {
 		t.Fatal("one healthy backend should return true")
 	}
 }

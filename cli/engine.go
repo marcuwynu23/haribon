@@ -132,6 +132,23 @@ func (s *swappable) RecordFailure(backend string) {
 	}
 }
 
+// HasHealthyBackend reports whether at least one backend is available for
+// routing. Used by /readyz so the readiness probe agrees with the proxy's
+// actual accept/reject decision — local health, cluster peer health, and the
+// circuit breaker all count, same as engineHealthChecker.IsAvailable.
+func (s *swappable) HasHealthyBackend() bool {
+	e := s.load()
+	if e == nil || len(e.backends) == 0 {
+		return false
+	}
+	for _, b := range e.backends {
+		if e.health.IsAvailable(b) {
+			return true
+		}
+	}
+	return false
+}
+
 // ────────────────────────────────────────────────
 // runtime
 // ────────────────────────────────────────────────

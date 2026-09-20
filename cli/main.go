@@ -185,28 +185,6 @@ func getNextBackend() (string, error) {
 }
 
 // ==========================
-// HEALTH CHECKER (adapter for health.Readyz probe)
-// ==========================
-
-type balancerHealthChecker struct{}
-
-func (balancerHealthChecker) HasHealthyBackend() bool {
-	healthMutex.RLock()
-	defer healthMutex.RUnlock()
-	pool := getBackends()
-	if len(pool) == 0 {
-		return false
-	}
-	for _, b := range pool {
-		v, known := backendHealth[b]
-		if !known || v {
-			return true
-		}
-	}
-	return false
-}
-
-// ==========================
 // METRICS-AWARE TRANSITION LOGGER
 // ==========================
 
@@ -378,7 +356,7 @@ func startCommand(args []string) {
 	addr := fmt.Sprintf("%s:%d", cfg.MainHost, cfg.MainPort)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", health.Healthz)
-	mux.HandleFunc("/readyz", health.Readyz(balancerHealthChecker{}))
+	mux.HandleFunc("/readyz", health.Readyz(rt.sw))
 	mux.Handle("/metrics", activeConnsHandler(rt, reg))
 	mux.Handle("/", proxyHandler)
 

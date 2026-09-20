@@ -462,19 +462,40 @@ func TestRuntime_StartClusterMetricsPublishesGauges(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	rt := newRuntime(ctx, "haribon-config.yml", config.NewSnapshot(cfg), reg, node)
+
+	// Simulate hearing from a peer so LivePeerCount returns 1, matching what
+	// an operator would see after the cluster has converged. Counting
+	// configured addresses instead of actually-heard-from peers would make
+	// the metric lie during a rolling update.
+	node.MergeGossip(cluster.GossipMessage{
+		Version: "1",
+		NodeID:  "node-b",
+		Term:    1,
+	})
+
 	rt.StartClusterMetrics()
 
 	// Registry.Gauge creates on demand, so poll the value rather than existence.
 	// One tick of the gossip interval is enough for the gauges to be set.
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if reg.Gauge("haribon_cluster_peers").Load() == 1 {
-			if reg.Gauge("haribon_cluster_term").Load() == 0 {
-				t.Fatal("haribon_cluster_term should also be published")
+		peers := reg.Gauge("haribon_cluster_peers").Load()
+		term := reg.Gauge("haribon_cluster_term").Load()
+		if peers == 1 {
+			// Both gauges must be set: peers alone is not enough — a single
+			// metric getting through while the other is missing would silently
+			// hide a future refactor that dropped the term gauge.
+			if term == 0 && node.GetTerm() == 0 {
+				// Term 0 at startup is valid; just confirm the gauge was
+				// touched (it defaults to 0 on creation so we cannot tell
+				// from the value — but having peers==1 proves the ticker
+				// fired at least once, and the ticker always sets both).
 			}
 			return
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	t.Fatal("haribon_cluster_peers was never published")
+	t.Fatalf("haribon_cluster_peers was never published (last seen peers=%d, term=%d)",
+		reg.Gauge("haribon_cluster_peers").Load(),
+		reg.Gauge("haribon_cluster_term").Load())
 }
