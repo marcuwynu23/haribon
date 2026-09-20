@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sort"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -17,8 +19,51 @@ type Provider interface {
 	Discover() ([]string, error)
 	// Close releases any resources held by the provider.
 	Close() error
-	// Watch starts polling for backend changes until stopCh is closed.
-	Watch(stopCh <-chan struct{})
+	// Watch polls for backend changes until stopCh is closed, calling onChange
+	// with the new list whenever it differs from the last one delivered.
+	// onChange is never called concurrently and never called with an unchanged
+	// list; a poll that errors is skipped and retried on the next tick.
+	Watch(stopCh <-chan struct{}, onChange func([]string))
+}
+
+// SameList reports whether two backend lists contain the same URLs in the same
+// order. Used to suppress no-op rebuilds when a poll returns unchanged data.
+func SameList(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// watchLoop is the shared polling body used by the DNS and file providers.
+func watchLoop(interval time.Duration, stopCh <-chan struct{}, discover func() ([]string, error), onChange func([]string)) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	var last []string
+	for {
+		select {
+		case <-stopCh:
+			return
+		case <-ticker.C:
+			got, err := discover()
+			if err != nil || len(got) == 0 {
+				continue // transient failure: keep the previous pool
+			}
+			if SameList(got, last) {
+				continue
+			}
+			last = append([]string(nil), got...)
+			if onChange != nil {
+				onChange(got)
+			}
+		}
+	}
 }
 
 // StaticProvider returns a fixed list of backends (no dynamic discovery).
@@ -48,7 +93,7 @@ func (p *StaticProvider) Discover() ([]string, error) {
 func (p *StaticProvider) Close() error { return nil }
 
 // Watch is a no-op for StaticProvider (no dynamic discovery).
-func (p *StaticProvider) Watch(stopCh <-chan struct{}) {
+func (p *StaticProvider) Watch(stopCh <-chan struct{}, _ func([]string)) {
 	<-stopCh
 }
 
@@ -60,10 +105,14 @@ func (p *StaticProvider) Update(backends []string) {
 	copy(p.backends, backends)
 }
 
-// DNSProvider polls a DNS name for A/SRV records at a configured interval.
+// DNSProvider polls a DNS name for A/AAAA records at a configured interval.
 // It implements Provider.
+//
+// Note: SRV lookups are not implemented; A/AAAA records are used and the port
+// is taken from dns_port (default 80) so the result is a usable backend URL.
 type DNSProvider struct {
 	name     string
+	port     int
 	interval time.Duration
 	resolver *net.Resolver
 	stopCh   <-chan struct{}
@@ -73,44 +122,52 @@ type DNSProvider struct {
 
 // NewDNSProvider creates a DNS discovery provider.
 // name is the DNS hostname (e.g. "api.internal").
+// port is stamped onto every resolved address; values <= 0 mean 80.
 // interval is the poll duration.
 // stopCh is used to stop the polling goroutine.
-func NewDNSProvider(name string, interval time.Duration, stopCh <-chan struct{}) *DNSProvider {
+func NewDNSProvider(name string, port int, interval time.Duration, stopCh <-chan struct{}) *DNSProvider {
+	if port <= 0 {
+		port = 80
+	}
 	return &DNSProvider{
 		name:     name,
+		port:     port,
 		interval: interval,
 		resolver: &net.Resolver{PreferGo: true},
 		stopCh:   stopCh,
 	}
 }
 
-// Discover resolves the DNS name and returns A record addresses.
+// Discover resolves the DNS name and returns backend URLs.
+// net.Resolver.LookupHost returns bare addresses ("10.0.0.1"), so each one is
+// formatted into an http:// URL using the configured port — a bare address is
+// not usable as a proxy target.
+//
+// net.JoinHostPort is used rather than fmt.Sprintf("%s:%d") because an AAAA
+// record ("2001:db8::1") must be bracketed: "http://2001:db8::1:80" is not a
+// parseable URL, and would fail at request time rather than at startup.
 func (p *DNSProvider) Discover() ([]string, error) {
 	addrs, err := p.resolver.LookupHost(context.Background(), p.name)
 	if err != nil {
 		return nil, fmt.Errorf("dns lookup %q: %w", p.name, err)
 	}
+	urls := make([]string, 0, len(addrs))
+	for _, addr := range addrs {
+		urls = append(urls, "http://"+net.JoinHostPort(addr, strconv.Itoa(p.port)))
+	}
+	sort.Strings(urls)
 	p.mu.Lock()
-	p.backends = addrs
+	p.backends = urls
 	p.mu.Unlock()
-	return addrs, nil
+	return urls, nil
 }
 
 // Close is a no-op for DNSProvider (polling is stopped externally via stopCh).
 func (p *DNSProvider) Close() error { return nil }
 
 // Watch polls the DNS name at the configured interval until stopCh closes.
-func (p *DNSProvider) Watch(stopCh <-chan struct{}) {
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-stopCh:
-			return
-		case <-ticker.C:
-			_, _ = p.Discover()
-		}
-	}
+func (p *DNSProvider) Watch(stopCh <-chan struct{}, onChange func([]string)) {
+	watchLoop(p.interval, stopCh, p.Discover, onChange)
 }
 
 // FileProvider watches a JSON file for backend list changes.
@@ -159,23 +216,15 @@ func (p *FileProvider) Discover() ([]string, error) {
 func (p *FileProvider) Close() error { return nil }
 
 // Watch polls the file at the configured interval until stopCh closes.
-func (p *FileProvider) Watch(stopCh <-chan struct{}) {
-	ticker := time.NewTicker(p.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-stopCh:
-			return
-		case <-ticker.C:
-			_, _ = p.Discover()
-		}
-	}
+func (p *FileProvider) Watch(stopCh <-chan struct{}, onChange func([]string)) {
+	watchLoop(p.interval, stopCh, p.Discover, onChange)
 }
 
 // Config holds discovery configuration.
 type Config struct {
 	Provider   string // static | dns | file
 	DNSName    string
+	DNSPort    int // port stamped onto resolved DNS addresses (default 80)
 	FilePath   string
 	RefreshSec int
 }
@@ -192,7 +241,7 @@ func NewProvider(disc Config, stopCh <-chan struct{}) (Provider, error) {
 		if interval <= 0 {
 			interval = 30 * time.Second
 		}
-		p := NewDNSProvider(disc.DNSName, interval, stopCh)
+		p := NewDNSProvider(disc.DNSName, disc.DNSPort, interval, stopCh)
 		return p, nil
 	case "file":
 		if disc.FilePath == "" {
