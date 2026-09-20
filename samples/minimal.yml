@@ -1,0 +1,8 @@
+# Minimal configuration for quick start
+# Just host, port, and backends
+host: "0.0.0.0"
+port: 4444
+
+backends:
+  - url: "http://localhost:8080"
+  - url: "http://localhost:8081"

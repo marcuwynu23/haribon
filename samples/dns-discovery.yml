@@ -1,0 +1,21 @@
+# DNS-based backend discovery
+# Backends are resolved dynamically from DNS
+# Use for k8s, auto-scaling environments
+host: "0.0.0.0"
+port: 4444
+
+balancer:
+  strategy: round_robin
+
+discovery:
+  provider: dns
+  dns_name: "api.internal"
+  refresh_sec: 30
+
+health:
+  enabled: true
+  interval_sec: 10
+  timeout_sec: 2
+  path: /
+  healthy_threshold: 1
+  unhealthy_threshold: 2

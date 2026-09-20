@@ -1,0 +1,55 @@
+# Production-ready configuration with all features
+host: "0.0.0.0"
+port: 4444
+logging: true
+log_path: "/var/log/haribon/haribon.log"
+shutdown_timeout_sec: 30
+
+# Load balancing strategy
+balancer:
+  strategy: least_connections
+
+# Backend pool
+backends:
+  - url: "http://backend1:8080"
+    weight: 1
+  - url: "http://backend2:8080"
+    weight: 2
+  - url: "http://backend3:8080"
+    weight: 1
+
+# Active health checking
+health:
+  enabled: true
+  interval_sec: 10
+  timeout_sec: 2
+  path: /healthz
+  healthy_threshold: 2
+  unhealthy_threshold: 3
+
+# Retry policy (idempotent methods only)
+retry:
+  max_retries: 2
+
+# Circuit breaker per backend
+breaker:
+  failure_threshold: 5
+  cooldown_sec: 30
+
+# Structured JSON logging
+log_format: json
+exporters:
+  - stdout
+  - file
+
+# Backend auto-discovery (optional, overrides static backends)
+discovery:
+  provider: dns
+  dns_name: "api.internal"
+  refresh_sec: 30
+
+# Management API
+admin:
+  enabled: true
+  addr: "127.0.0.1:4445"
+  token: ""

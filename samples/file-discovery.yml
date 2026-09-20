@@ -1,0 +1,16 @@
+# File-based backend discovery
+# Backends list is read from a JSON file
+# Use when backends change via scripts or orchestration tools
+host: "0.0.0.0"
+port: 4444
+
+balancer:
+  strategy: round_robin
+
+discovery:
+  provider: file
+  file_path: "/etc/haribon/backends.json"
+  refresh_sec: 10
+
+# Sample backends.json format:
+# ["http://10.0.0.1:4441", "http://10.0.0.2:4442"]

@@ -1,0 +1,15 @@
+# IP hash strategy for session affinity
+# Same client IP always maps to the same backend
+host: "0.0.0.0"
+port: 4444
+
+balancer:
+  strategy: ip_hash
+
+backends:
+  - url: "http://backend1:8080"
+  - url: "http://backend2:8080"
+  - url: "http://backend3:8080"
+
+# Session affinity works best when client count >> backend count
+# and clients connect from a limited set of IPs

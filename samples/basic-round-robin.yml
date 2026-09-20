@@ -1,0 +1,12 @@
+# Basic round-robin load balancer
+# Simplest possible configuration
+host: "0.0.0.0"
+port: 4444
+
+balancer:
+  strategy: round_robin
+
+backends:
+  - url: "http://localhost:4441"
+  - url: "http://localhost:4442"
+  - url: "http://localhost:4443"
