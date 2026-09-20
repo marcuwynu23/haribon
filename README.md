@@ -39,6 +39,20 @@ server that is down or failing. It runs as a single binary.
   the `X-Haribon-Retries` response header.
 - **Graceful shutdown** — on `SIGINT` or `SIGTERM`, requests already in flight
   are allowed to finish before the process exits.
+- **Three-gate failover** — before routing, Haribon consults (1) local health,
+  (2) cluster peer findings (gossip), and (3) the circuit breaker. *Any* gate
+  closed means skip — so one replica finding a dead server stops traffic from
+  all of them, and a hot backend is never hammered past its breaker threshold.
+  `GET /readyz` mirrors the same three-gate logic so your fronting LB drops
+  replicas that truly cannot route.
+- **Clustering for consistent backend health, not IP takeover.** Running ≥2
+  Haribon replicas with `cluster: enabled` shares health findings over UDP
+  gossip so all replicas agree on which servers to skip. Haribon does **not**
+  do floating-VIP takeover, leader election, or traffic balancing across
+  replicas itself — place a K8s Service, cloud LB, keepalived VIP, or nginx
+  upstream pool in front for single-IP HA. See the
+  [USER_GUIDE.md → High Availability](USER_GUIDE.md#high-availability-failover--redundancy)
+  section for deployment patterns.
 
 ### Seeing what is happening
 
@@ -62,10 +76,11 @@ server that is down or failing. It runs as a single binary.
 - **Server discovery** — get the server list from DNS or from a JSON file that
   something else rewrites. Haribon polls it and adds and removes servers as the
   list changes.
-- **Clustering** — run several Haribon replicas and they tell each other which
-  servers are down, so a server that one replica cannot reach is skipped by all
-  of them. Replicas that are running different config files report it as a
-  mismatch so you can see the drift.
+- **Clustering** — run several Haribon replicas and they share backend health
+  findings over UDP gossip, so a server one replica finds unreachable is
+  skipped by all of them. Config drift between replicas is exposed as
+  `haribon_config_hash_mismatch_total`. Scoping details + deployment
+  patterns are in the user guide.
 
 ### Running it
 
