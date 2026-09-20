@@ -181,7 +181,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			time.Sleep(25 * time.Millisecond) // backoff
 		}
 
-		server, err := h.bal.Next(h.hc)
+		server, err := h.pickBackend(clientIP)
 		if err != nil {
 			break // no healthy backend at all
 		}
@@ -296,6 +296,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Haribon-Retries", strconv.Itoa(retries))
 	}
 	http.Error(w, "All backend servers failed", http.StatusServiceUnavailable)
+}
+
+// pickBackend selects the next backend for a request.
+//
+// When the configured strategy is address-aware (ip_hash) the balancer is asked
+// for the backend this specific client maps to, which is what makes session
+// affinity real. Every other strategy has no NextForIP and falls through to the
+// ordinary Next call, so the Balancer interface stays unchanged.
+func (h *Handler) pickBackend(clientIP string) (string, error) {
+	if iph, ok := h.bal.(balancer.IPHash); ok {
+		return iph.NextForIP(h.hc, clientIP)
+	}
+	return h.bal.Next(h.hc)
 }
 
 func (h *Handler) incCounter(name, label, value string) {
