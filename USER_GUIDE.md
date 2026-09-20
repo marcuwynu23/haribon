@@ -2,24 +2,28 @@
 
 ## Overview
 
-Haribon is a lightweight Go-based Layer 7 (HTTP) load balancer designed for production environments. It supports multiple balancing algorithms, health-aware routing, circuit breakers, retry policies, and Prometheus metrics â€” all configurable via YAML without code changes.
+Haribon is a small HTTP load balancer written in Go, for running in production. It supports several balancing methods, health-aware routing, circuit breakers, retry policies, and Prometheus metrics — all configured in YAML, with no code changes.
 
 **Key Features:**
 - **Pluggable balancing strategies**: round_robin, weighted_round_robin, least_connections, random, ip_hash
 - **Active health checking** with configurable thresholds
-- **Circuit breaker** per backend (FSM: closed â†’ open â†’ half-open â†’ closed)
-- **Retry policy** for idempotent methods (GET, HEAD, PUT, DELETE, OPTIONS)
+- **Circuit breaker** per backend (closed → open → half-open → closed)
+- **Retry policy** for methods that are safe to repeat (GET, HEAD, PUT, DELETE, OPTIONS)
 - **Prometheus metrics** endpoint (`/metrics`)
-- **Structured JSON logs** compatible with Loki/Promtail
+- **Structured logs** in JSON or plain text, sent to stdout, a file, Loki, Elasticsearch, or Fluent Bit
+- **Config reload, backend discovery, and cluster-shared health** without a restart
 
 ## Installation
 
 ### From Source
 
 ```bash
-go get github.com/marcuwynu23/haribon
+git clone https://github.com/marcuwynu23/haribon.git
+cd haribon
 go build -o haribon ./cli
 ```
+
+Or `make build`, which writes to `bin/haribon` and stamps the version.
 
 ### Docker
 
@@ -152,7 +156,8 @@ health:
 ```
 
 **Probe Behavior:**
-- Probes are sent to `/healthz` endpoint
+- Probes are sent to the path in `health.path` (default `/`), not to a fixed endpoint
+- Any `2xx` response counts as a success; a timeout or anything else is a failure
 - Backends are marked unhealthy after N consecutive failures
 - Unhealthy backends are skipped by the balancer
 - All-unhealthy scenario returns `503 Service Unavailable`
@@ -213,27 +218,35 @@ haribon start --config haribon-config.yml --watch_config 30
 
 ### Behavior
 
-- **In-flight requests** complete on the previous config snapshot
-- **Backend list, weights, TLS certs, log level** swap atomically
-- **Failed reloads** log `level:error` and keep the old config â€” never crash
+- **In-flight requests** finish against the config they started with
+- **Backend list, weights, balancing method, breaker and retry settings, and log destinations** are swapped in for new requests
+- **A server that stays in the list keeps its state** — its failure count and breaker state carry over, so a reload does not hand a struggling server a clean slate
+- **Failed reloads** log an error and keep the old config — never crash
 - **Listener address/port changes** require a restart
 - **All-unhealthy** scenario returns `503 All backend servers failed`
 
+TLS certificates are not reloaded or served by Haribon; it does not terminate
+TLS. Put a TLS-terminating proxy in front of it.
+
 ### Atomic Snapshot
 
-The `config.Snapshot` type uses `atomic.Pointer` to swap configs atomically. Old snapshots remain accessible until in-flight requests complete.
+`config.Snapshot` holds the current config behind an atomic pointer, so a reload
+replaces it in one step and a request that already started keeps reading the
+config it began with.
 
 ```go
 s := config.NewSnapshot(cfg)
-s.Reload(path)  // atomically swaps the config
-s.Load()        // returns the current snapshot
+s.Reload(path)  // swaps the config in one step
+s.Load()        // returns the current config
 ```
 
 ### Log Output
 
-```json
-{"level":"info","msg":"config reloaded","path":"haribon-config.yml"}
-{"level":"error","msg":"config reload error: ..."}  // on failure
+Reload messages go to standard error using Go's standard logger:
+
+```
+2026/05/04 01:31:55 config reloaded: haribon-config.yml
+2026/05/04 01:31:55 config reload error: reload validate: unknown balancer strategy "foo"
 ```
 
 ## Backend Auto-Discovery
@@ -246,14 +259,19 @@ For dynamic environments (k8s, auto-scaling), Haribon can automatically discover
 Fixed backend list from `backends:` YAML field. No dynamic updates.
 
 #### DNS
-Polls a DNS name for A records at the configured interval.
+Polls a DNS name for `A` and `AAAA` records at the configured interval.
 
 ```yaml
 discovery:
   provider: dns
   dns_name: "api.internal"
+  dns_port: 80          # port attached to each resolved address (default: 80)
   refresh_sec: 30
 ```
+
+A DNS lookup returns bare addresses like `10.0.0.1`, which are not usable as
+server addresses on their own, so `dns_port` is attached to each one. SRV
+records are not supported.
 
 #### File
 Watches a JSON file containing an array of backend URLs.
@@ -266,6 +284,16 @@ discovery:
 ```
 
 The JSON file must contain: `["http://10.0.0.1:4441", "http://10.0.0.2:4442"]`
+
+### What Happens on a Change
+
+Every `refresh_sec` Haribon re-reads the source. When the list differs from the
+last one it saw, it rebuilds the pool: new servers start taking traffic and
+servers that disappeared stop. Discovered servers are *added* to the `backends`
+list in the config file — they do not replace it.
+
+A lookup that fails, or a file that is momentarily unreadable, is skipped and
+tried again on the next poll. It never empties the pool.
 
 ### Health Flow
 
@@ -293,14 +321,15 @@ health:
 
 ## Clustering & High Availability
 
-Haribon supports multi-replica clustering with gossip-based health sharing, enabling zero-downtime deployments and automatic failover.
+Haribon can run as several replicas that tell each other which servers are down, so one replica's findings are acted on by all of them.
 
 ### Architecture
 
-Each Haribon instance runs as a node in a gossip cluster:
-- Nodes exchange backend health state over **UDP 7946**
-- **Last-writer-wins** conflict resolution using monotonic terms
-- **Partition-tolerant**: each node degrades gracefully using local health state during network splits
+Each Haribon replica runs as a node in the cluster:
+
+- Nodes exchange server health over **UDP 7946**
+- When two nodes disagree about a server, the **newer report wins**
+- **A partitioned node keeps working**: it falls back to its own findings rather than sending traffic nowhere
 - Minimum recommended: **3 nodes** for production
 
 ### Configuration
@@ -308,22 +337,51 @@ Each Haribon instance runs as a node in a gossip cluster:
 ```yaml
 cluster:
   enabled: true
-  node_id: "${HOSTNAME}"          # Unique node identifier
+  node_id: "${HOSTNAME}"          # must differ on every replica
   peers:
-    - "haribon-0:7946"            # Initial peer list
+    - "haribon-0:7946"            # addresses of the other replicas
     - "haribon-1:7946"
     - "haribon-2:7946"
-  gossip_interval_sec: 5           # Gossip broadcast interval
-  gossip_addr: "0.0.0.0:7946"     # Gossip listen address
+  gossip_interval_sec: 5           # how often to exchange health
+  gossip_addr: "0.0.0.0:7946"     # address this replica listens on
 ```
+
+`${HOSTNAME}` is replaced with the `HOSTNAME` environment variable, which is
+different in every container and pod. If `node_id` is left empty, Haribon uses
+the machine's hostname instead. Two replicas sharing a node ID would ignore each
+other's updates entirely, so if a `${...}` reference cannot be resolved,
+`start` refuses to run rather than starting a cluster that does nothing.
+
+Every replica needs the same `peers` list, including the entries that are not
+itself. A node skips its own address when sending.
+
+If the gossip port cannot be opened, `start` exits with an error. A node that
+could send but not receive would look healthy to its peers while silently
+ignoring everything they report.
 
 ### Behavior
 
-- **Startup**: Node joins the cluster via the initial peer list
-- **Health sharing**: When a node marks a backend unhealthy, the state propagates to all peers within seconds
-- **Conflict resolution**: If two nodes disagree on backend health, the higher term wins
-- **Graceful degradation**: If gossip is partitioned, each node continues routing based on its last known health state
-- **No single point of failure**: All nodes are equal; no leader election required
+- **Startup**: each node opens its gossip port and sends health to its peers
+- **Health sharing**: when a node marks a server unhealthy, the news reaches its peers within a few gossip intervals
+- **Conflict resolution**: if two nodes disagree, the newer report wins
+- **Graceful degradation**: if gossip is partitioned, each node keeps routing on its own findings
+- **No single point of failure**: all nodes are equal; there is no leader
+
+### Config drift
+
+Each node hashes its config file and includes that hash in its updates. A peer
+running a different config file is counted in
+`haribon_config_hash_mismatch_total` and logged, so a rollout that only reached
+some replicas is visible rather than silent.
+
+### What clustering does not do
+
+It shares health findings only. It does not copy config between replicas, and it
+does not balance requests across the replicas themselves — put them behind
+something that does, or point DNS at all of them.
+
+Nodes running different Haribon versions may not understand each other's
+messages; roll out replicas together.
 
 ### Deployment Examples
 
@@ -415,8 +473,21 @@ Validate configuration against the JSON schema:
 
 ```bash
 haribon validate --config haribon-config.yml
-# Output: valid: config file passes schema validation (2 backend(s))
+# Output: valid: config file passes haribon-config.schema.json (2 backend(s))
 ```
+
+This runs everything `check` runs, then compares the file against
+`schema/haribon-config.schema.json`. That second step is what catches a
+misspelled key or a value that is not one of the allowed ones — for example
+`strategy: roundrobin` or `prot: 4444`. Every problem found is reported, not
+just the first.
+
+The schema is looked for at `schema/haribon-config.schema.json`,
+`../schema/haribon-config.schema.json`,
+`../../schema/haribon-config.schema.json`, and
+`/etc/haribon/haribon-config.schema.json`. Pass `--schema <path>` to point
+somewhere else. If no schema can be found, `validate` exits `1` and says so —
+run it from the repository root, or pass `--schema`.
 
 ### `haribon version`
 
@@ -466,37 +537,50 @@ haribon start --config haribon-config.yml --watch_config 30 &
 Haribon exposes metrics at `http://<host>:<port>/metrics`:
 
 ```
-# HELP haribon_requests_total Total number of proxied requests
 # TYPE haribon_requests_total counter
-haribon_requests_total{backend="..."} 1234
+haribon_requests_total{backend="http://localhost:4441"} 1234
 
-# HELP haribon_backend_healthy Whether backend is healthy
 # TYPE haribon_backend_healthy gauge
-haribon_backend_healthy{backend="..."} 1
+haribon_backend_healthy{backend="http://localhost:4441"} 1
 
-# HELP haribon_breaker_state Circuit breaker state
 # TYPE haribon_breaker_state gauge
-haribon_breaker_state{backend="..."} 0
+haribon_breaker_state{backend="http://localhost:4441"} 0
 
-# HELP haribon_last_duration_ms Last request duration in ms
 # TYPE haribon_last_duration_ms gauge
-haribon_last_duration_ms{backend="..."} 45.2
+haribon_last_duration_ms{backend="http://localhost:4441"} 45
 
-# HELP haribon_retries_total Total retry attempts
 # TYPE haribon_retries_total counter
-haribon_retries_total{backend="..."} 5
+haribon_retries_total{backend="http://localhost:4441"} 5
 
-# HELP haribon_active_conns Active connections per backend
 # TYPE haribon_active_conns gauge
-haribon_active_conns{backend="..."} 12
+haribon_active_conns{backend="http://localhost:4441"} 12
 ```
+
+The full list:
+
+| Metric | Type | Meaning |
+| --- | --- | --- |
+| `haribon_requests_total{backend}` | counter | Attempts sent to each server - a request retried elsewhere counts on both |
+| `haribon_responses_total{backend,code}` | counter | Responses, by status code |
+| `haribon_retries_total{backend}` | counter | Retries, per server |
+| `haribon_errors_total{reason}` | counter | Requests that failed on every server |
+| `haribon_backend_healthy{backend}` | gauge | `1` healthy, `0` unhealthy |
+| `haribon_breaker_state{backend}` | gauge | `0` closed, `1` open, `2` half-open |
+| `haribon_active_conns{backend}` | gauge | Requests in flight, per server (`least_connections` only) |
+| `haribon_last_duration_ms{backend}` | gauge | How long the last response took |
+| `haribon_cluster_peers` | gauge | Replicas heard from recently (clustering only) |
+| `haribon_cluster_term` | gauge | Highest update counter this replica has recorded, its own or a peer's |
+| `haribon_config_hash_mismatch_total` | counter | Replicas seen running a different config file |
+
+Every value is an integer. The response carries `# TYPE` lines but no `# HELP`
+descriptions.
 
 ### Structured Logging
 
-Every proxied request produces a JSON log line:
+Every proxied request produces a log line. In JSON (the default):
 
 ```json
-{"time":"2024-01-15T10:30:00Z","method":"GET","path":"/","backend":"http://localhost:4441","status":200,"duration_ms":45,"retries":0,"level":"info"}
+{"time":"2026-05-04T10:30:00.1234567Z","method":"GET","path":"/","backend":"http://localhost:4441","status":200,"duration_ms":45,"level":"info"}
 ```
 
 Fields (additive - never remove):
@@ -506,17 +590,44 @@ Fields (additive - never remove):
 - `backend` - Selected backend URL
 - `status` - Response status code
 - `duration_ms` - Request duration in milliseconds
-- `retries` - Number of retry attempts (optional)
+- `retries` - Number of retry attempts (omitted when the request was not retried)
 - `level` - Log level (info/warn/error)
 
-### Log File Configuration
+With `log_format: text` you get one plain line instead:
+
+```
+2026-05-04T10:30:00Z INFO  GET / -> http://localhost:4441 200 45ms
+```
+
+### Log Destinations
+
+`logging: true` and `log_path` control the file. `log_format` chooses `json` or
+`text`. `exporters` lists where lines go:
 
 ```yaml
 logging: true
 log_path: "./haribon.log"
+log_format: json
+exporters:
+  - stdout
+  - file
 ```
 
-If the log directory doesn't exist, Haribon creates it automatically. Falls back to stdout if the log file is unwritable.
+| Exporter | Sends to | Configured by |
+| --- | --- | --- |
+| `stdout` | standard output | — |
+| `file` | `log_path` | `logging: true` |
+| `loki` | Loki's push API | `loki.url`, `loki.labels` |
+| `elasticsearch` | Elasticsearch's bulk API | `elasticsearch.url`, `elasticsearch.index` |
+| `fluentbit` | Fluent Bit's forward input on TCP 24224 | `fluentbit.addr` |
+
+If the log directory doesn't exist, Haribon creates it. If the log file cannot
+be opened, Haribon falls back to stdout rather than refusing to start.
+
+Each destination has its own queue and its own background sender, so one slow or
+unreachable destination does not delay the others or the request that produced
+the line. When a queue fills up, lines are dropped instead of being delayed. If
+`exporters` is left out, it defaults to `stdout`.
 
 ## Docker Deployment
 
@@ -595,13 +706,15 @@ Haribon is lightweight with minimal resource requirements:
 - [ ] Configure appropriate balancer strategy for your workload
 - [ ] Set health check intervals and thresholds
 - [ ] Enable circuit breaker with appropriate failure threshold
-- [ ] Configure retry policy for idempotent methods
-- [ ] Set up log rotation or Loki/Promtail integration
+- [ ] Configure retry policy for methods that are safe to repeat
+- [ ] Set up log rotation, or send logs to Loki, Elasticsearch, or Fluent Bit with `exporters`
 - [ ] Expose `/metrics` for Prometheus scraping
 - [ ] Set up `/healthz` and `/readyz` probes for K8s
-- [ ] Configure HTTPS termination if terminating TLS before Haribon
+- [ ] Terminate TLS in front of Haribon — it does not do TLS itself
 - [ ] Set appropriate resource limits in Docker/K8s
 - [ ] Test failover scenarios (kill backends, verify 503)
+- [ ] If running several replicas, enable `cluster` and give each a distinct `node_id`
+- [ ] Watch `haribon_config_hash_mismatch_total` during rollouts to catch replicas left on an old config
 
 ## License
 

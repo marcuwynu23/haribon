@@ -60,22 +60,55 @@
         <span class="cmd">./haribon</span> start --config haribon-config.yml
       </div>
 
-      <h3>Flags</h3>
+      <h3>Commands</h3>
       <div class="dl">
         <div class="dl-row">
           <div class="dl-label">start</div>
           <div class="dl-value">Start the load balancer</div>
         </div>
         <div class="dl-row">
-          <div class="dl-label">--config</div>
-          <div class="dl-value">Path to YAML configuration file</div>
+          <div class="dl-label">check</div>
+          <div class="dl-value">Read a config file and report problems. Exits 0 when it is fine, 1 when it is not</div>
+        </div>
+        <div class="dl-row">
+          <div class="dl-label">validate</div>
+          <div class="dl-value">The same, plus a check against the JSON schema, which catches misspelled keys</div>
+        </div>
+        <div class="dl-row">
+          <div class="dl-label">version</div>
+          <div class="dl-value">Print the version and exit</div>
         </div>
       </div>
+
+      <h3>Flags for <code>start</code></h3>
+      <div class="dl">
+        <div class="dl-row">
+          <div class="dl-label">--config</div>
+          <div class="dl-value">Path to the YAML configuration file. Defaults to <code>$HARIBON_CONFIG</code>, then <code>./haribon-config.yml</code></div>
+        </div>
+        <div class="dl-row">
+          <div class="dl-label">--watch_config</div>
+          <div class="dl-value">Check the config file for changes every N seconds and apply them without a restart</div>
+        </div>
+      </div>
+
+      <h3>Reloading without restarting</h3>
+      <p>On Linux and macOS you can send <code>SIGHUP</code> to the process and it will re-read its config file:</p>
+      <div class="code-block">
+        <span class="cmd">kill</span> -HUP $(pgrep haribon)
+      </div>
+      <p style="margin-top:12px">Windows never delivers <code>SIGHUP</code>, so on Windows use <code>--watch_config</code> instead. It polls the file every N seconds and applies a change when it sees one.</p>
+      <div class="code-block">
+        <span class="cmd">./haribon</span> start --config haribon-config.yml --watch_config 30
+      </div>
+      <p style="margin-top:12px">Either way, a reload rebuilds the routing state in place: request counters and breaker history for backends that are still there are kept, so a reload does not reset a breaker that is midway through its cooldown.</p>
 
       <h2>Example</h2>
       <p>With the default configuration, Haribon listens on port 4444 and distributes requests across three local backends.</p>
 
       <div class="code-block">
+        <span class="comment"># Check the config first</span><br>
+        <span class="cmd">./haribon</span> check --config haribon-config.yml<br><br>
         <span class="comment"># Start the load balancer</span><br>
         <span class="cmd">./haribon</span> start --config haribon-config.yml
       </div>
@@ -86,7 +119,7 @@
         <span class="cmd">curl</span> http://localhost:4444
       </div>
 
-      <p style="margin-top:16px">Haribon proxies the request to one of the healthy backends using round-robin scheduling. Each request is logged as a structured JSON entry:</p>
+      <p style="margin-top:16px">Haribon proxies it to one of the healthy backends. If the first one it picks refuses the connection, it tries another — but only for methods that are safe to repeat, and the response you get back says how many attempts it took in <code>X-Haribon-Retries</code>.</p>
 
       <h2>Log Output</h2>
       <div class="code-block">
@@ -100,23 +133,31 @@
           &nbsp;&nbsp;<span class="string">"level"</span>: <span class="string">"info"</span><br>
         }
       </div>
+      <p><code>retries</code> appears only when a request was actually retried. Set <code>log_format: text</code> for a plain line instead of JSON.</p>
+
+      <h2>Metrics</h2>
+      <p><code>/metrics</code> returns Prometheus text format — request counts, retries, last response time, backend health, breaker state, and active connections, each labelled with the backend it refers to.</p>
+      <div class="code-block">
+        <span class="cmd">curl</span> -s http://localhost:4444/metrics | grep haribon_requests_total
+      </div>
 
       <h2>Query Logs in Grafana</h2>
-      <p>With the observability stack running, open <a href="http://localhost:3000" target="_blank" rel="noopener">Grafana</a> (admin/admin) and query:</p>
+      <p>The observability Compose stack runs Promtail, which tails the log file and ships it to Loki, and provisions Loki as a Grafana data source. Open <a href="http://localhost:3000" target="_blank" rel="noopener">Grafana</a> (admin / admin), go to Explore, and pick the Loki source:</p>
       <div class="code-block">
         {job=<span class="string">"haribon"</span>}
       </div>
-      <p>Filter errors:</p>
+      <p>Filter to failures:</p>
       <div class="code-block">
         {job=<span class="string">"haribon"</span>} |= <span class="string">"error"</span>
       </div>
+      <p>There are no dashboards pre-built; Grafana starts with the data source wired up and nothing on the boards.</p>
 
       <h2>Tips</h2>
       <ul>
-        <li>Haribon is stateless — run multiple instances behind another load balancer for high availability</li>
-        <li>Logs are written to both stdout and a configurable file, so you never lose visibility</li>
-        <li>Use <code>HARIBON_HOST</code> and <code>HARIBON_PORT</code> environment variables for containerized deployments</li>
-        <li>Pair with the included Docker Compose observability stack for instant Grafana dashboards</li>
+        <li>Logs go to stdout always. Add <code>file</code> to <code>exporters</code> to also write them to <code>log_path</code>, and <code>loki</code>, <code>elasticsearch</code>, or <code>fluentbit</code> to ship them somewhere.</li>
+        <li>Use <code>HARIBON_HOST</code>, <code>HARIBON_PORT</code>, and <code>HARIBON_CONFIG</code> to override the config in a container.</li>
+        <li>Put a <code>check</code> in your CI pipeline. It is the cheapest way to catch a config that would not have started.</li>
+        <li>For high availability, run several Haribon replicas rather than one. With <code>cluster.enabled</code> they share what they find about each backend, so a server one of them cannot reach is skipped by all of them — see <a href="https://github.com/marcuwynu23/haribon/blob/main/docs/clustering.md" target="_blank" rel="noopener">docs/clustering.md</a>.</li>
       </ul>
     </div>
   </section>

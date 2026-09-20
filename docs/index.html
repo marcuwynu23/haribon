@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Haribon distributes traffic across your backend services with zero complexity. Round-robin routing, health checks, and observability in a single binary.">
+  <meta name="description" content="Haribon spreads traffic across your backend services. Five routing strategies, health checks, retries, and Prometheus metrics in a single binary.">
   <title>Haribon — Traffic Distribution Made Simple</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -53,7 +53,7 @@
     <canvas id="hero-canvas"></canvas>
     <div class="hero-content">
       <h1>Ship with Confidence.<br><span>Balance with Ease.</span></h1>
-      <p>Haribon distributes traffic across your backend services so you can focus on building features, not infrastructure. Round-robin routing, health-aware balancing, and full observability — all in a single binary.</p>
+      <p>Haribon spreads traffic across your backend services so you can focus on building features, not infrastructure. Five routing strategies, health checks that take a failing server out of rotation, retries, and metrics — all in a single binary with one dependency.</p>
       <div class="hero-actions">
         <a href="installation.html" class="btn btn-primary">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -68,6 +68,22 @@
           GitHub
         </a>
       </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-header">
+      <h2>What it does</h2>
+      <p>Everything below works today. Nothing here is a preview.</p>
+    </div>
+    <div class="page-content">
+      <p><strong>Five ways to choose a backend.</strong> Round-robin, weighted round-robin when your machines are not the same size, least-connections, random, and IP hash when a visitor needs to keep landing on the same server.</p>
+      <p><strong>Failing servers are skipped, not served.</strong> Background probes check each backend on an interval. A server that fails enough probes is taken out of rotation and put back when it recovers. A per-backend circuit breaker does the same for failures your probes never see.</p>
+      <p><strong>Retries, but only where they are safe.</strong> A request that fails on a connection error is tried again on another backend — but only if the method is one that can be repeated without side effects. A POST is never retried for you.</p>
+      <p><strong>A server list that can change.</strong> Read it from DNS or from a JSON file that another system rewrites, and Haribon picks up additions and removals while it runs.</p>
+      <p><strong>More than one Haribon.</strong> Replicas compare notes over UDP, so a server one of them cannot reach is skipped by all of them. There is no separate coordination service to run.</p>
+      <p><strong>You can see what is happening.</strong> Prometheus metrics, per-request logs, and an optional feed to Loki, Elasticsearch, or Fluent Bit.</p>
+      <p><a href="features.html">Full feature list →</a></p>
     </div>
   </section>
 

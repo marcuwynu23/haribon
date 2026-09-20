@@ -1,4 +1,4 @@
-﻿# Enterprise Runbook â€” Haribon
+﻿# Enterprise Runbook — Haribon
 
 This document covers Kubernetes, systemd, and CI integration patterns for
 production deployments of Haribon. See `haribon-config.yml` for the canonical
@@ -12,8 +12,8 @@ Haribon exposes two probe endpoints:
 
 | Endpoint | Type | Returns |
 |----------|------|---------|
-| `GET /healthz` | Liveness | `200 {"status":"ok"}` â€” always |
-| `GET /readyz` | Readiness | `200 {"status":"ok"}` if â‰¥1 backend healthy; `503 {"status":"unavailable","message":"..."}` otherwise |
+| `GET /healthz` | Liveness | `200 {"status":"ok"}` — always |
+| `GET /readyz` | Readiness | `200 {"status":"ok"}` if ≥1 backend healthy; `503 {"status":"unavailable","message":"..."}` otherwise |
 
 The probes are registered before the proxy mux so they respond even when
 all backends are down.
@@ -47,7 +47,7 @@ shutdown_timeout_sec: 15
 
 ## Config Validation in CI
 
-Use `haribon check` to fail the build on bad config before it reaches production:
+Use `haribon check` to fail the build on a bad config before it reaches production:
 
 ```bash
 # GitHub Actions step
@@ -61,6 +61,12 @@ validate-config:
 ```
 
 Exit codes: `0` = valid, `1` = config error.
+
+`haribon check` applies the rules Haribon itself enforces at startup. Use
+`haribon validate` instead to also compare the file against
+`schema/haribon-config.schema.json`, which additionally catches misspelled keys
+and values that are not in a list of allowed ones. `validate` reports every
+problem it finds, not just the first.
 
 ---
 
@@ -172,13 +178,24 @@ spec:
           averageUtilization: 70
 ```
 
-### Rolling Update â€” Zero Dropped Requests
+### Rolling Update — Zero Dropped Requests
 
 Key settings that prevent dropped requests during `kubectl rollout`:
 
-1. `terminationGracePeriodSeconds: 30` â€” kubelet waits at least 30 s after SIGTERM before SIGKILL.
-2. `shutdown_timeout_sec: 15` â€” Haribon drains in-flight requests within 15 s.
-3. `readinessProbe` â€” kubelet removes the pod from the Service endpoints before sending SIGTERM, so no new traffic arrives during the drain window.
+1. `terminationGracePeriodSeconds: 30` — kubelet waits at least 30 s after SIGTERM before SIGKILL. Must be longer than `shutdown_timeout_sec`, or the drain is cut short.
+2. `shutdown_timeout_sec: 15` — Haribon drains in-flight requests within 15 s.
+3. `preStop: sleep 5` — see below.
+
+Item 3 is the one people miss. Kubernetes removes a pod from Service endpoints
+and sends SIGTERM **at the same time**, not one before the other, so a request
+can still be routed to a pod that has just stopped accepting connections. A
+`preStop` hook that pauses for a few seconds gives the endpoint removal time to
+propagate first. The pause is inside `terminationGracePeriodSeconds`, so it does
+not shorten the drain.
+
+The `readinessProbe` is what takes a replica out of rotation when it genuinely
+cannot serve, but it is not a rolling-update mechanism — its period is measured
+in seconds, and the gap it leaves is exactly the one `preStop` closes.
 
 ---
 
@@ -262,10 +279,10 @@ tail -f haribon.log | jq 'select(.level == "error")'
 
 ## Security Notes
 
-- Hop-by-hop headers (`Connection`, `Transfer-Encoding`, `Upgrade`, `Keep-Alive`, etc.) are stripped from both request and response to prevent header injection.
-- `X-Forwarded-For` is appended (not replaced) to preserve the client chain.
-- `X-Forwarded-Proto` is set to `http` or `https` based on whether the inbound connection used TLS.
-- Config validation rejects non-`http/https` backend URLs (blocks `file://`, etc.).
+- The per-connection headers that only apply to one hop (`Connection`, `Keep-Alive`, `Proxy-Authenticate`, `Proxy-Authorization`, `Te`, `Trailer`, `Transfer-Encoding`, `Upgrade`) are removed from both the request and the response, along with anything the `Connection` header names. A client cannot smuggle a header through Haribon to your servers.
+- `X-Forwarded-For` is appended to, not replaced, so the existing chain is preserved.
+- `X-Forwarded-Proto` is set from the inbound connection. Haribon does not terminate TLS, so in practice it is always `http` — a TLS-terminating proxy in front of Haribon should set the real value itself.
+- Config validation rejects backend URLs that are not `http` or `https` (so `file://` and the like cannot be configured).
 - Log files are created with `0644` permissions; directories with `0755`.
 - The Docker image runs as non-root user `haribon`.
 
@@ -283,5 +300,5 @@ docker compose -f samples/docker-compose/docker-compose.observability.yml up -d
 
 ---
 
-*For roadmap items (active health checks, retry, circuit breaker, Prometheus metrics) see [README.md#roadmap](../README.md#roadmap).*
+*Active health checks, retries, the circuit breaker, Prometheus metrics, hot reload, backend discovery, and cluster-shared health are all implemented. See [../README.md](../README.md) for what each one does and [ROADMAP.md](../ROADMAP.md) for what is still planned.*
 

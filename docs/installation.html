@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Install Haribon â€” download pre-built binaries, build from source, or pull the Docker image.">
-  <title>Installation â€” Haribon</title>
+  <meta name="description" content="Install Haribon &mdash; build from source, run the Docker image, or start the full observability stack with Docker Compose.">
+  <title>Installation &mdash; Haribon</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -59,11 +59,19 @@
         <div class="install-step-num">1</div>
         <div class="install-step-content">
           <h3>Build from Source</h3>
-          <p>Clone the repository and build the binary.</p>
+          <p>You need Go 1.23 or newer. The program is one binary and its only dependency is a YAML parser, so the build takes a few seconds and needs no network access beyond the first download.</p>
           <div class="code-block">
             <span class="cmd">git clone</span> https://github.com/marcuwynu23/haribon.git<br>
             <span class="cmd">cd</span> haribon<br>
-            <span class="cmd">go build</span> -o haribon main.go
+            <span class="cmd">go build</span> -o haribon ./cli
+          </div>
+          <p style="margin-top:12px">Then either run it straight away:</p>
+          <div class="code-block">
+            <span class="cmd">./haribon</span> start --config haribon-config.yml
+          </div>
+          <p style="margin-top:12px">or install it somewhere on your <code>PATH</code>:</p>
+          <div class="code-block">
+            <span class="cmd">go install</span> github.com/marcuwynu23/haribon/cli@latest
           </div>
         </div>
       </div>
@@ -75,21 +83,42 @@
           <div class="code-block">
             <span class="cmd">docker pull</span> ghcr.io/marcuwynu23/haribon:latest
           </div>
-          <p style="margin-top:12px">Run the container:</p>
+          <p style="margin-top:12px">Run the container. It reads <code>/etc/haribon/haribon-config.yml</code> unless you point it somewhere else with <code>HARIBON_CONFIG</code>:</p>
           <div class="code-block">
-            <span class="cmd">docker run</span> -d -p 4444:4444 ghcr.io/marcuwynu23/haribon:latest
+            <span class="cmd">docker run</span> -d -p 4444:4444 \<br>
+            &nbsp;&nbsp;-v ./haribon-config.yml:/etc/haribon/haribon-config.yml:ro \<br>
+            &nbsp;&nbsp;ghcr.io/marcuwynu23/haribon:latest
           </div>
+          <p style="margin-top:12px">The image ships a default config, so it will also start without the volume mount — it just has nothing useful to send traffic to.</p>
         </div>
       </div>
       <div class="install-step">
         <div class="install-step-num">3</div>
         <div class="install-step-content">
           <h3>Docker Compose (Full Observability Stack)</h3>
-          <p>Start Haribon with Loki, Promtail, and Grafana in one command.</p>
+          <p>Start Haribon with Loki, Promtail, and Grafana in one command. See <a href="usage.html">Usage</a> for how to wire the log exporter to Loki.</p>
           <div class="code-block">
-            <span class="cmd">docker compose</span> -f samples/docker-compose/docker-compose.observability.yml up -d
+            <span class="cmd">cd</span> samples/docker-compose<br>
+            <span class="cmd">docker compose</span> -f docker-compose.observability.yml up -d
           </div>
-          <p style="margin-top:12px">This starts Haribon on port 4444 and three backend services on ports 4441-4443, plus the full Grafana observability stack.</p>
+          <p style="margin-top:12px">Haribon listens on <code>4444</code>, three sample backends on <code>4441</code>-<code>4443</code>, Grafana on <code>3000</code>, and Loki on <code>3100</code>. The compose file expects <code>data/haribon-config.yml</code> to exist under <code>samples/docker-compose/</code>; copy <code>examples/haribon-config.yml.example</code> there first.</p>
+        </div>
+      </div>
+      <div class="install-step">
+        <div class="install-step-num">4</div>
+        <div class="install-step-content">
+          <h3>Check It Works</h3>
+          <p>Ask Haribon to read your config and report problems before it starts serving anything. The command exits <code>0</code> when the file is fine and <code>1</code> when it is not, so it is safe to put in a pipeline.</p>
+          <div class="code-block">
+            <span class="cmd">haribon check</span> --config haribon-config.yml
+          </div>
+          <p style="margin-top:12px"><code>haribon check</code> reads the settings and reports anything contradictory. <code>haribon validate</code> goes further and checks the file against the JSON schema in <code>schema/haribon-config.schema.json</code>, which catches typos in key names. Use <code>check</code> for a quick answer and <code>validate</code> in CI.</p>
+          <p style="margin-top:12px">Once it is running, these two endpoints tell you what is going on:</p>
+          <div class="code-block">
+            <span class="cmd">curl</span> -s http://localhost:4444/readyz<br>
+            <span class="cmd">curl</span> -s http://localhost:4444/metrics
+          </div>
+          <p style="margin-top:12px"><code>/healthz</code> says the process is up. <code>/readyz</code> says it has at least one backend it considers usable, and returns <code>503</code> when it does not.</p>
         </div>
       </div>
     </div>

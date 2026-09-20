@@ -1,107 +1,130 @@
-# Circuit Breaker & Retry Policy — Haribon
+# Retries and the Circuit Breaker
+
+Two features that keep one sick server from spoiling everyone's requests.
+Retries spend a second attempt on another server; the breaker stops sending
+traffic to a server that keeps failing.
 
 ---
 
-## Retry Policy
-
-### Configuration
+## Retries
 
 ```yaml
 retry:
-  max_retries: 1  # additional attempts beyond the first
+  max_retries: 1   # extra attempts after the first
 ```
 
-### Behaviour
+### When a request is retried
 
-| Condition | Retried? |
-|-----------|----------|
-| Network error (connection refused, timeout) | Yes — if method is idempotent |
-| HTTP 502 / 503 / 504 response | Yes — if method is idempotent |
-| HTTP 500 or other 4xx/5xx | No — forwarded to client as-is |
-| POST / PATCH / CONNECT | Never — non-idempotent, single attempt only |
-| GET / HEAD / PUT / DELETE / OPTIONS | Yes — up to `max_retries` extra attempts |
+| What happened | Retried? |
+|---|---|
+| The connection failed, timed out, or was refused | Yes, for methods that are safe to repeat |
+| The server answered `502`, `503`, or `504` | Yes, for methods that are safe to repeat |
+| The server answered `500` or any other `4xx`/`5xx` | No — passed straight back to the client |
+| A `POST` or `PATCH` failed for any reason | No — never, under any setting |
 
-### Retry Loop
+`GET`, `HEAD`, `OPTIONS`, `PUT`, and `DELETE` are treated as safe to repeat.
 
-1. First attempt: pick next backend from the balancer.
-2. On failure: sleep 25 ms, pick the next healthy backend, retry.
-3. After `max_retries + 1` total attempts all fail → `503 All backend servers failed`.
-4. Every retry increments `haribon_retries_total{backend}` in `/metrics`.
-5. The response header `X-Haribon-Retries: N` is set when N > 0, so clients
-   and upstream proxies can see how many retries occurred.
+**`POST` and `PATCH` are never retried.** Sending the same form twice can create
+two records or charge a card twice, so a failed `POST` is reported as failed
+after one attempt rather than risk a duplicate. This is not configurable.
 
-### Safety
+### How the retry works
 
-POST and PATCH are **never retried** to prevent duplicate mutations (e.g.
-creating two database records). If a POST fails, the 503 is returned
-immediately after one attempt.
+1. Pick a server and send the request.
+2. If that fails in a retryable way, wait 25 ms, pick again — which skips the
+   server that just failed — and send it there.
+3. After `max_retries + 1` attempts have all failed, answer
+   `503 All backend servers failed`.
+4. Each retry is counted in `haribon_retries_total{backend}` against the server
+   that failed.
+5. If any retry happened, the response carries `X-Haribon-Retries: <n>`, so the
+   client can tell a first-try success from a rescued one.
+
+For a request that is safe to repeat, the body is held in memory so it can be
+sent again. That means `max_retries` costs memory proportional to the request
+size — worth knowing if you accept large uploads with `PUT`.
 
 ---
 
-## Circuit Breaker
-
-### Configuration
+## Circuit breaker
 
 ```yaml
 breaker:
-  failure_threshold: 5   # consecutive failures before opening
-  cooldown_sec: 30       # seconds before attempting a half-open probe
+  failure_threshold: 5   # failures in a row before the breaker opens
+  cooldown_sec: 30       # how long to leave it open before testing again
 ```
 
-### Three-State FSM
+A retry still costs a real connection and a real timeout. When a server is
+thoroughly down, the breaker stops making those attempts at all.
 
-```
-         N consecutive failures
-Closed ────────────────────────► Open
-  ▲                               │
-  │    success in half-open       │  cooldown elapsed
-  │                               ▼
-  └──────────────────────── Half-Open
-         failure → re-opens
-```
+### The three states
 
-| State | Behaviour |
-|-------|-----------|
-| **Closed** | Normal operation. Failures counted. |
-| **Open** | All requests to this backend rejected instantly. No network calls made. |
-| **Half-Open** | Exactly one trial request allowed through after cooldown. |
+| State | What happens |
+|---|---|
+| **Closed** | Normal. The server takes traffic and its failures are counted. |
+| **Open** | Every request to this server is refused immediately. No connection is made, so a request costs nothing to skip. |
+| **Half-open** | After the cooldown, exactly one request is let through as a test. |
 
-### State Transitions
+### Moving between them
 
-- **Closed → Open**: `failure_threshold` consecutive failures (network error or 502/503/504).
-- **Open → Half-Open**: `cooldown_sec` elapsed since opening; first `IsAvailable()` call transitions and returns `true`.
-- **Half-Open → Closed**: Trial request succeeds (`RecordSuccess()`).
-- **Half-Open → Open**: Trial request fails (`RecordFailure()`); fresh cooldown starts.
+- **Closed to open** — after `failure_threshold` failures in a row. A failure
+  here means a network error or a `502`/`503`/`504`. Other responses reset the
+  counter, including a `500`: the server answered, so it is reachable and the
+  breaker is not the right tool for an application bug.
+- **Open to half-open** — automatically, once `cooldown_sec` has passed.
+- **Half-open to closed** — the trial request succeeded. The server is back in
+  normal rotation.
+- **Half-open to open** — the trial request failed. The breaker reopens and the
+  cooldown starts over.
 
-### Observability
+While the trial is in flight, other requests to that server are still refused,
+so a recovering server gets one request to prove itself, not a flood.
 
-Every state transition emits a log line:
+Every transition is logged:
 
 ```json
-{"time":"…","method":"BREAKER","path":"circuit-breaker","backend":"http://…","status":0,"level":"warn"}
+{"time":"2026-05-04T01:31:55Z","method":"BREAKER","path":"circuit-breaker","backend":"http://localhost:4442","status":0,"level":"warn"}
 ```
 
-The `/metrics` endpoint tracks:
+### What the breaker is not
 
-```
-haribon_breaker_state{backend="http://..."} 0   # 0=closed, 1=open, 2=half_open
-haribon_retries_total{backend="http://..."} 12
-haribon_errors_total{reason="all_backends_failed"} 3
-```
-
-### Interaction with Balancer
-
-The `compositeHealthChecker` in `cli/main.go` combines:
-
-1. Passive health map (updated by proxy on success/failure).
-2. Circuit breaker `IsAvailable()`.
-
-A backend is only routed to when **both** agree it is available. This means
-a half-open circuit only allows one in-flight request at a time.
+It is per Haribon process and in memory only. Restarting Haribon clears every
+breaker, and two replicas keep their own breakers — see
+[clustering.md](clustering.md).
 
 ---
 
-## Example Config (all features enabled)
+## How it fits together
+
+When Haribon is deciding where to send a request, a server has to pass all of
+these:
+
+1. **It is not known to be down** — from background probes if `health.enabled`,
+   or from earlier requests if not.
+2. **No replica has reported it down** — only when clustering is on.
+3. **Its breaker is not open.**
+
+If every server fails all three, the request is answered `503`. A server that is
+skipped because of its breaker is not "tried and failed" — it is passed over
+without a connection, which is the point.
+
+---
+
+## Metrics
+
+```
+haribon_breaker_state{backend="http://localhost:4442"} 0   # 0 closed, 1 open, 2 half-open
+haribon_retries_total{backend="http://localhost:4442"} 12
+haribon_errors_total{reason="all_backends_failed"} 3
+```
+
+`haribon_errors_total` counts requests that failed on every server — the ones a
+client actually saw fail. The full list is in
+[../README.md](../README.md#metrics).
+
+---
+
+## Full example
 
 ```yaml
 balancer:
@@ -131,13 +154,12 @@ backends:
 
 ---
 
-## Testing
+## Testing it yourself
 
 ```bash
-# Run all tests including breaker and retry
-go test ./... -count=1 -v
-
-# Specific packages
 go test ./internal/health/... -run TestBreaker -v
 go test ./internal/proxy/... -run TestProxy_Retry -v
 ```
+
+`pkill -STOP <backend pid>` is a quick way to make a server stop answering, so
+you can watch the breaker open and the retries appear in `/metrics`.

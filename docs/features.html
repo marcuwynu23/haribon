@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Explore Haribon features — round-robin load balancing, health-aware routing, JSON logging, Loki integration, Docker support, and more.">
+  <meta name="description" content="Haribon features: five routing strategies, health checks, retries, circuit breaking, discovery, hot reload, clustering, and log exporting to Loki, Elasticsearch, or Fluent Bit.">
   <title>Features — Haribon</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -51,59 +51,152 @@
 
   <section class="section">
     <div class="section-header">
-      <h2>Features</h2>
-      <p>Everything you need for simple, observable request distribution.</p>
+      <h2>Routing</h2>
+      <p>Five ways to pick a backend, all configured with one line.</p>
     </div>
     <div class="feature-grid">
       <div class="feature-card">
-        <h3>Layer 7 (HTTP) Load Balancing</h3>
-        <p>Routes HTTP requests to backend servers at the application layer. Full support for HTTP/1.1 reverse proxying via the standard library.</p>
+        <h3>Round-Robin</h3>
+        <p>Requests go to each backend in turn. With three servers, each one gets every third request. This is the default.</p>
       </div>
       <div class="feature-card">
-        <h3>Round-Robin Scheduling</h3>
-        <p>Distributes requests across your backend servers in a fair, cyclic order. Each request is routed to the next available server automatically.</p>
+        <h3>Weighted Round-Robin</h3>
+        <p>Give a bigger machine a bigger share. A backend with <code>weight: 3</code> takes three requests out of every five — exactly, not on average.</p>
       </div>
       <div class="feature-card">
-        <h3>Health-Aware Routing</h3>
-        <p>Skips unhealthy servers automatically. Only healthy backends receive traffic, so your users always reach a working service. If all backends are down, Haribon returns a clear 503 error.</p>
+        <h3>Least Connections</h3>
+        <p>New requests go to whichever backend is currently handling the fewest. Better than round-robin when some requests take much longer than others.</p>
       </div>
       <div class="feature-card">
-        <h3>Structured JSON Logging</h3>
-        <p>Outputs structured JSON logs with timestamp, method, path, backend, status code, and duration. Ready for ingestion by Loki, Elasticsearch, or any JSON-compatible log pipeline.</p>
+        <h3>Random</h3>
+        <p>Pick a healthy backend at random. Cheap, and it spreads load well over a large number of requests.</p>
       </div>
       <div class="feature-card">
-        <h3>Loki &amp; Promtail Integration</h3>
-        <p>First-class support for the Grafana observability stack. Includes a Docker Compose file that sets up Haribon, Promtail, Loki, and Grafana with a single command.</p>
+        <h3>IP Hash</h3>
+        <p>The same visitor keeps landing on the same backend, so their session or cache entry stays put. Stable as long as the backend list does not change.</p>
       </div>
       <div class="feature-card">
-        <h3>Docker Support</h3>
-        <p>Official images published to GitHub Container Registry. Run with a single <code>docker run</code> command or deploy via Compose alongside your backend services.</p>
-      </div>
-      <div class="feature-card">
-        <h3>Environment Variable Overrides</h3>
-        <p>Override host and port via <code>HARIBON_HOST</code> and <code>HARIBON_PORT</code> environment variables. Useful for containerized deployments and CI/CD pipelines.</p>
-      </div>
-      <div class="feature-card">
-        <h3>Graceful Fallback Logging</h3>
-        <p>If the configured log file cannot be created or written, Haribon automatically falls back to stdout. Ensures you never lose visibility into traffic.</p>
+        <h3>HTTP Reverse Proxy</h3>
+        <p>A plain HTTP proxy. Request and response bodies stream through rather than being buffered, and the client's address is forwarded in <code>X-Forwarded-For</code>.</p>
       </div>
     </div>
   </section>
 
   <section class="section" style="padding-top:0">
     <div class="section-header">
-      <h2>Export Formats</h2>
-      <p>Logs and metrics are delivered in standard formats ready for your existing pipeline.</p>
+      <h2>Keeping traffic on working servers</h2>
+      <p>What happens when a backend stops answering.</p>
     </div>
     <div class="feature-grid">
       <div class="feature-card">
-        <h3>JSON Logs</h3>
-        <p>Structured JSON output with consistent schema. Each log entry includes time, method, path, backend, status, duration, and level. Compatible with Loki, Elasticsearch, and Datadog.</p>
+        <h3>Health Checks</h3>
+        <p>Haribon probes each backend on an interval and takes it out of rotation after a set number of failures. It goes back in automatically once it passes again. Nothing else has to know.</p>
       </div>
       <div class="feature-card">
-        <h3>Stdout / File Output</h3>
-        <p>Logs are written to both stdout and a configurable file simultaneously. File directories are auto-created. Falls back to stdout if file writing fails.</p>
+        <h3>Circuit Breaker</h3>
+        <p>A per-backend breaker for failures your probes never see — a backend that answers, but answers with a 500 every time. After enough failures the breaker opens and requests stop going there for a cooldown period.</p>
       </div>
+      <div class="feature-card">
+        <h3>Retries, Only Where Safe</h3>
+        <p>A connection failure is retried on another backend, but only when the method is safe to repeat. <code>POST</code> and <code>PATCH</code> are never retried for you, because a retried payment is worse than a failed one.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Readiness That Means Something</h3>
+        <p><code>/healthz</code> says the process is alive. <code>/readyz</code> says it has somewhere to send traffic, and returns 503 when every backend is down — so an orchestrator stops routing to a pod that cannot serve.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Graceful Shutdown</h3>
+        <p>On shutdown, Haribon stops accepting new connections and waits for in-flight requests to finish before exiting, up to a configurable timeout.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Config Checker</h3>
+        <p><code>haribon check</code> reports anything contradictory in a config file and exits 0 or 1. <code>haribon validate</code> goes further and checks it against a JSON schema, catching misspelled keys. Both are safe in CI.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" style="padding-top:0">
+    <div class="section-header">
+      <h2>Changing without restarting</h2>
+      <p>The backend list does not have to be frozen at startup.</p>
+    </div>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <h3>File Discovery</h3>
+        <p>Point Haribon at a JSON array of backend URLs that another system rewrites. New servers join and dead ones leave while Haribon runs.</p>
+      </div>
+      <div class="feature-card">
+        <h3>DNS Discovery</h3>
+        <p>Read the backend list from DNS, so a Kubernetes Service or an autoscaling group can hand you servers without a restart. A and AAAA records; SRV is not supported.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Config Hot Reload</h3>
+        <p>Change anything in the config file — strategies, thresholds, timeouts, backends — and Haribon picks it up. Breaker history survives, so a reload does not reset a breaker that is mid-cooldown.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Clustering</h3>
+        <p>Run more than one Haribon and they compare notes over UDP. A server one replica cannot reach is skipped by all of them. There is no separate coordination service to run and no leader to elect.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" style="padding-top:0">
+    <div class="section-header">
+      <h2>Seeing what happened</h2>
+      <p>Logs and metrics in formats your existing pipeline already understands.</p>
+    </div>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <h3>Prometheus Metrics</h3>
+        <p>A <code>/metrics</code> endpoint in the standard text format. Per-backend request counts, retries, last response time, health, breaker state, and active connections.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Structured Logs</h3>
+        <p>One JSON object per request: time, method, path, chosen backend, status, duration, and how many times it was retried. <code>log_format: text</code> gives you a human-readable line instead.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Log Exporting</h3>
+        <p>Send logs to Loki, Elasticsearch, or Fluent Bit in addition to stdout and a file. Each destination batches in the background, so a slow collector does not slow down your traffic.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Docker Support</h3>
+        <p>Official images on GitHub Container Registry, plus Compose files for a local cluster and for a full Grafana, Loki, and Promtail stack.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" style="padding-top:0">
+    <div class="section-header">
+      <h2>Configuration</h2>
+      <p>One YAML file. Nothing else to install.</p>
+    </div>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <h3>One Dependency</h3>
+        <p>Everything is the Go standard library plus a YAML parser. The result is a single static binary with no runtime to install.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Environment Overrides</h3>
+        <p><code>HARIBON_HOST</code>, <code>HARIBON_PORT</code>, and <code>HARIBON_CONFIG</code> override the corresponding settings, which is usually what you want in a container.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Values From the Environment</h3>
+        <p>Anything in the config file can reference <code>${VAR}</code> and be filled in at startup — the usual trick for giving each replica a unique <code>node_id</code>.</p>
+      </div>
+      <div class="feature-card">
+        <h3>JSON Schema</h3>
+        <p><code>schema/haribon-config.schema.json</code> describes the whole file, so your editor can complete and check it as you type. <code>haribon validate</code> uses the same schema.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" style="padding-top:0">
+    <div class="section-header">
+      <h2>Not here yet</h2>
+      <p>Listed so you can plan around them rather than discover them.</p>
+    </div>
+    <div class="page-content">
+      <p>Haribon does not terminate TLS, does not trace requests, and does not rate-limit. It does not host virtual hosts or route by hostname or path — every request goes to the backend pool. There is no management UI or admin API: the <code>admin:</code> block in the config file is read but nothing listens on it. These are tracked in <a href="https://github.com/marcuwynu23/haribon/blob/main/ROADMAP.md" target="_blank" rel="noopener">ROADMAP.md</a>.</p>
     </div>
   </section>
 

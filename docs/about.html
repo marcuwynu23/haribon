@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Learn how Haribon distributes traffic across your backend services — simple to set up, health-aware, and fully observable.">
+  <meta name="description" content="What Haribon is, when to use it, and when something else is the better choice.">
   <title>About — Haribon</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -56,35 +56,40 @@
     </div>
     <div class="page-content">
       <h2>Overview</h2>
-      <p>Haribon is a minimal, production-ready HTTP load balancer. It distributes incoming traffic across multiple backend servers using round-robin scheduling with health-aware filtering. Built for developers who need a lightweight reverse proxy without the overhead of complex configuration.</p>
+      <p>Haribon is an HTTP load balancer. It accepts requests on a port you choose and forwards each one to a backend server it picks from a list you write in a YAML file. It is one binary with one dependency — a YAML parser — and no runtime to install alongside it.</p>
+
+      <p>It is deliberately narrow. It does not terminate TLS, inspect paths or hostnames, rate-limit, or trace requests. Every request goes to the backend pool. If you need those things, put Haribon behind something that provides them, or reach for a different tool.</p>
 
       <h2>When to Use Haribon</h2>
-      <h3>Microservices Development</h3>
-      <p>Route traffic across local service instances during development and testing. Haribon's round-robin scheduler distributes requests evenly, giving each instance equal load without manual coordination.</p>
 
-      <h3>Simple Production Deployments</h3>
-      <p>For small to medium-scale services that need request distribution without the operational complexity of traditional load balancers. Haribon handles health checking, structured logging, and graceful fallback with minimal configuration — just a YAML file and a single binary.</p>
+      <h3>Microservices in development</h3>
+      <p>Point it at several local instances of a service and get a single address for all of them. Health checks mean a crashed instance stops receiving traffic while you are still debugging it, instead of feeding you connection errors.</p>
 
-      <h3>Observability Stacks</h3>
-      <p>Haribon outputs structured JSON logs compatible with Loki and Promtail out of the box. Pair it with the included Docker Compose observability stack to get Grafana dashboards up in minutes.</p>
+      <h3>Small to medium production services</h3>
+      <p>When you need requests spread across a handful of servers, health checks, and a metrics endpoint, without taking on the configuration surface of a full ingress controller. The whole config file is one screen long.</p>
 
-      <h3>Legacy Service Discovery</h3>
-      <p>When you need a lightweight proxy fronting legacy services that lack built-in load balancing. Haribon's health-aware routing automatically skips unhealthy backends, providing basic resilience without invasive changes.</p>
+      <h3>Backends that come and go</h3>
+      <p>If a deploy script, an orchestrator, or a DNS record already knows which servers exist, Haribon can follow it — from a JSON file or from DNS — and pick up additions and removals without a restart.</p>
+
+      <h3>Fronting services that cannot look after themselves</h3>
+      <p>Legacy services that have no health endpoint of their own still get taken out of rotation when they stop answering, because Haribon probes them from the outside. No changes to the service required.</p>
 
       <h2>Key Benefits</h2>
       <ul>
-        <li><strong>Single binary</strong> — no runtime dependencies, no complex setup</li>
-        <li><strong>Health-aware routing</strong> — unhealthy backends are skipped automatically</li>
-        <li><strong>Loki-ready logging</strong> — structured JSON logs that integrate with the Grafana stack</li>
-        <li><strong>Docker support</strong> — official image on GitHub Container Registry</li>
-        <li><strong>Environment overrides</strong> — configure host and port via environment variables</li>
-        <li><strong>Graceful fallback</strong> — falls back to stdout if log file creation fails</li>
+        <li><strong>One binary, one dependency</strong> — nothing to install beside it, and no library you have to keep patched</li>
+        <li><strong>Failing servers are skipped, not served</strong> — background probes take a bad backend out of rotation and put it back when it recovers</li>
+        <li><strong>Retries where they are safe</strong> — connection failures are retried on another backend, but never for a method that would repeat a side effect</li>
+        <li><strong>The server list can change while it runs</strong> — from DNS, from a file another system rewrites, or by reloading the config</li>
+        <li><strong>More than one of them, if you want</strong> — replicas share what they find about each backend over UDP; no coordination service, no leader</li>
+        <li><strong>You can see what it did</strong> — Prometheus metrics, one log line per request, and optional shipping to Loki, Elasticsearch, or Fluent Bit</li>
       </ul>
 
       <h2>How It Works</h2>
-      <p>Haribon listens on a configurable host and port, accepts incoming HTTP requests, and forwards them to your backend servers. Backends are selected in round-robin order — each request goes to the next available server, so no single instance gets overloaded.</p>
+      <p>Haribon listens on a host and port, accepts an HTTP request, and asks the configured strategy which backend should get it. Round-robin is the default; you can also weight the servers, send to whichever has the fewest connections in flight, choose at random, or hash the visitor's address so they keep landing on the same server.</p>
 
-      <p>Haribon keeps track of backend health automatically. Unhealthy servers are skipped until they recover. If all backends are down, Haribon returns a clear error so your clients know what happened. Everything is logged in structured JSON format, ready to feed into your observability pipeline.</p>
+      <p>Before it forwards anything, it checks whether the backend it picked is currently considered healthy. A backend that has failed enough probes — or enough real requests, if the circuit breaker has opened — is skipped in favour of the next candidate. That is what makes a server going down a non-event rather than an outage.</p>
+
+      <p>Each request is logged as one line, and the counters behind <code>/metrics</code> are updated as it completes. Both are cheap because there is no agent involved: the same process that proxied the request is the one that recorded it.</p>
     </div>
   </section>
 
