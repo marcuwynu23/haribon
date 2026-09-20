@@ -5,14 +5,19 @@ services:
     ports:
       - "4444:4444"
     volumes:
-      # config file (edit locally, auto-reload on restart)
-      - ./data/haribon-config.yml:/etc/haribon/haribon-config.yml:Z
-      # optional log file (if logging enabled)
-      - ./data/logs/haribon.log:/var/log/haribon.log:Z
+      # Config file. Copy the example and edit it, or point this at your own:
+      #   cp examples/haribon-config.yml.example examples/haribon-config.yml
+      # and change this line to ./examples/haribon-config.yml:Z
+      - ./examples/haribon-config.yml.example:/etc/haribon/haribon-config.yml:Z
+      # Logs. The config sets log_path: /var/log/haribon.log, so mounting the
+      # host directory here leaves that file at ./data/logs/haribon.log.
+      - ./data/logs:/var/log:Z
 
     restart: unless-stopped
 
-  # Example backend services (for testing round-robin)
+  # Example backend services (for testing round-robin).
+  # http-echo answers 200 to every path with its -text value, so health probes
+  # pass and you can tell which backend served a request.
   backend1:
     image: hashicorp/http-echo
     command: ["-text=backend-1"]

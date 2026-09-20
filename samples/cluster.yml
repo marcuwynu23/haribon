@@ -1,34 +1,54 @@
-# Cluster configuration with gossip-based health sharing
+# Three replicas sharing which backends they find unhealthy.
+#
+# Every replica runs this same file, so `node_id` has to come from the
+# environment — ${HOSTNAME} is the container or pod name. If it cannot be
+# resolved, `start` refuses to run rather than let two replicas share one node
+# name and ignore each other.
+#
+#   NODE_ID=haribon-0 haribon start --config samples/cluster.yml
+#
+# See docs/clustering.md for what clustering does and does not do.
 host: "0.0.0.0"
 port: 4444
+
 balancer:
   strategy: round_robin
 
-# Backend pool
 backends:
   - url: "http://backend1:8080"
+    weight: 1
   - url: "http://backend2:8080"
+    weight: 1
   - url: "http://backend3:8080"
+    weight: 1
 
-# Cluster gossip health sharing
 cluster:
   enabled: true
   node_id: "${HOSTNAME}"
+
+  # Every replica, including this one — a message a replica sends to itself is
+  # discarded on arrival. Each replica must be able to reach all the others
+  # directly, so keep this list complete rather than chaining them.
   peers:
     - "haribon-0:7946"
     - "haribon-1:7946"
     - "haribon-2:7946"
-  gossip_interval_sec: 5
-  gossip_addr: "0.0.0.0:7946"
 
-# Active health checking
+  gossip_interval_sec: 5
+  gossip_addr: "0.0.0.0:7946"   # the address this replica listens on
+
 health:
   enabled: true
   interval_sec: 10
   timeout_sec: 2
+  path: /              # requested on each backend; anything but a 2xx is a failure
 
-# Backend auto-discovery (optional)
-discovery:
-  provider: dns
-  dns_name: "api.internal"
-  refresh_sec: 30
+# Optional extras. Discovery ADDS to the backends list above; it does not
+# replace it. `dns_port` is attached to each address DNS returns, because a
+# bare IP is not a usable backend URL — set it to the port your servers listen
+# on. Only A and AAAA records are read; SRV is not supported.
+# discovery:
+#   provider: dns
+#   dns_name: "api.internal"
+#   dns_port: 8080
+#   refresh_sec: 30

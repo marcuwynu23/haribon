@@ -1,6 +1,11 @@
-# File-based backend discovery
-# Backends list is read from a JSON file
-# Use when backends change via scripts or orchestration tools
+# Get the backend list from a JSON file that something else rewrites.
+#
+# Useful when a deploy script, an orchestrator, or a database job knows the
+# server list and Haribon should follow it without a restart or a config edit.
+#
+# There are no `backends:` here, so the pool is whatever the file contains.
+# Until the file exists and parses, the pool is empty and every request gets a
+# 503.
 host: "0.0.0.0"
 port: 4444
 
@@ -12,5 +17,20 @@ discovery:
   file_path: "/etc/haribon/backends.json"
   refresh_sec: 10
 
-# Sample backends.json format:
-# ["http://10.0.0.1:4441", "http://10.0.0.2:4442"]
+# The file is a JSON array of backend URLs:
+#
+#   ["http://10.0.0.1:4441", "http://10.0.0.2:4442"]
+#
+# Write it by creating the new file and renaming it over the old one. A rewrite
+# that is caught half-finished fails to parse; that poll is logged and skipped,
+# and the pool is left as it was rather than being emptied, but you would wait
+# an extra refresh_sec for the change to take effect.
+#
+# Discovered URLs are ADDED to whatever `backends:` lists. If you list a server
+# in both places it appears once, keeping the weight from `backends:`.
+
+health:
+  enabled: true
+  interval_sec: 10
+  timeout_sec: 2
+  path: /

@@ -1,8 +1,19 @@
 # Minimal configuration for quick start
-# Just host, port, and backends
+#
+#   haribon start --config samples/minimal.yml
+#   curl http://localhost:4444/
+#
+# Nothing is set beyond where to listen and who to send to, so the defaults
+# apply: round-robin across the two backends, background health checks off,
+# request logs to stdout as JSON.
+#
+# The two URLs below match the backends in
+# samples/docker-compose/docker-compose-backends.yml, so this config works as
+# soon as those containers are up:
+#   docker compose -f samples/docker-compose/docker-compose-backends.yml up -d backend1 backend2 backend3
 host: "0.0.0.0"
 port: 4444
 
 backends:
-  - url: "http://localhost:8080"
-  - url: "http://localhost:8081"
+  - url: "http://localhost:4441"
+  - url: "http://localhost:4442"

@@ -1,16 +1,32 @@
-# Production-ready configuration with all features
+# A production-shaped configuration with every feature switched on.
+#
+# Things you must change for your own deployment:
+#   - the backend URLs
+#   - health.path, to a path your servers answer with a 2xx
+#   - log_path, if /var/log/haribon is not writable for the user Haribon runs as
+#   - the discovery block at the bottom, or delete it
 host: "0.0.0.0"
 port: 4444
+
 logging: true
 log_path: "/var/log/haribon/haribon.log"
+log_format: json
+exporters:
+  - stdout
+  - file
+
+# How long in-flight requests get to finish on shutdown. Must be shorter than
+# the orchestrator's own grace period (terminationGracePeriodSeconds on
+# Kubernetes, TimeoutStopSec on systemd), or the drain is cut short.
 shutdown_timeout_sec: 30
 
-# Load balancing strategy
 balancer:
   strategy: least_connections
 
-# Backend pool
 backends:
+  # `weight` is only read by weighted_round_robin. It is set here so switching
+  # strategy does not silently drop the intended capacity split, but with
+  # least_connections these three are treated as equal.
   - url: "http://backend1:8080"
     weight: 1
   - url: "http://backend2:8080"
@@ -18,38 +34,38 @@ backends:
   - url: "http://backend3:8080"
     weight: 1
 
-# Active health checking
 health:
   enabled: true
   interval_sec: 10
   timeout_sec: 2
+  # Appended to each backend URL. Anything other than a 2xx counts as a failure,
+  # so a path your servers answer with 404 will mark them all unhealthy.
   path: /healthz
-  healthy_threshold: 2
-  unhealthy_threshold: 3
+  healthy_threshold: 2    # successes in a row before a backend is used again
+  unhealthy_threshold: 3  # failures in a row before it is taken out
 
-# Retry policy (idempotent methods only)
 retry:
-  max_retries: 2
+  max_retries: 2   # extra attempts, for methods that are safe to repeat only
 
-# Circuit breaker per backend
 breaker:
   failure_threshold: 5
   cooldown_sec: 30
 
-# Structured JSON logging
-log_format: json
-exporters:
-  - stdout
-  - file
+# Add servers from somewhere other than this file. Discovered servers are added
+# to the `backends` list above, not substituted for it. `dns_port` is attached
+# to each address DNS returns, so set it to the port your servers listen on.
+# Only A and AAAA records are read; SRV is not supported.
+# discovery:
+#   provider: dns
+#   dns_name: "api.internal"
+#   dns_port: 8080
+#   refresh_sec: 30
 
-# Backend auto-discovery (optional, overrides static backends)
-discovery:
-  provider: dns
-  dns_name: "api.internal"
-  refresh_sec: 30
-
-# Management API
-admin:
-  enabled: true
-  addr: "127.0.0.1:4445"
-  token: ""
+# To ship logs on instead of just writing them here, add a destination and its
+# block:
+# exporters: [stdout, loki]
+# loki:
+#   url: "http://loki:3100"
+#   labels:
+#     job: haribon
+#     env: prod

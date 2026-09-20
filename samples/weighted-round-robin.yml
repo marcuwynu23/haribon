@@ -1,5 +1,5 @@
 # Weighted round-robin load balancer
-# Higher weight = more traffic proportionally
+# Give a bigger machine a bigger share of the traffic
 host: "0.0.0.0"
 port: 4444
 
@@ -7,12 +7,21 @@ balancer:
   strategy: weighted_round_robin
 
 backends:
-  # 3x more traffic to backend-a
+  # 3 requests in every 5 go here
   - url: "http://backend-a:8080"
     weight: 3
-  # Normal traffic to backend-b
+  # 1 request in every 5
   - url: "http://backend-b:8080"
     weight: 1
-  # Another normal-weight backend
+  # 1 request in every 5
   - url: "http://backend-c:8080"
     weight: 1
+
+# The split is exact, not statistical: over any run of (3+1+1) = 5 requests,
+# each backend gets its weight in requests.
+#
+# A `weight` that is omitted or 0 is treated as 1, so a backend you leave alone
+# still takes an equal share. A negative weight is rejected at startup.
+#
+# `weight` is read only by this strategy. With any other one, these three
+# backends would be treated as equals.

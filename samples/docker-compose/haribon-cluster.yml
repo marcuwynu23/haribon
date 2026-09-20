@@ -4,17 +4,23 @@ balancer:
   strategy: round_robin
 
 backends:
-  - url: "http://backend1:8080"
+  - url: "http://backend1:5678"
     weight: 1
-  - url: "http://backend2:8080"
+  - url: "http://backend2:5678"
     weight: 1
-  - url: "http://backend3:8080"
+  - url: "http://backend3:5678"
     weight: 1
 
 cluster:
   enabled: true
+  # Expanded from the environment. docker-compose sets NODE_ID to a different
+  # value on each replica; if it is missing, start refuses to run rather than
+  # letting two replicas share one node name and ignore each other.
   node_id: "${NODE_ID}"
   peers:
+    # Every replica, addressed by its compose service name on the shared
+    # network. Each replica sends to all three; a message it sends to itself
+    # is discarded on arrival.
     - "haribon-0:7946"
     - "haribon-1:7946"
     - "haribon-2:7946"
@@ -25,7 +31,7 @@ health:
   enabled: true
   interval_sec: 5
   timeout_sec: 2
-  path: /healthz
+  path: /
 
 logging: true
 log_format: json

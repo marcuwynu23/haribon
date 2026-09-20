@@ -1,7 +1,28 @@
 host: "0.0.0.0"
 port: 4444
+
+# Requests are always logged to stdout. Set logging: true to also write them to
+# log_path (the file is created if the directory does not exist).
 logging: true
 log_path: "./haribon.log"
+log_format: json # json | text
+
+# Extra log destinations. Addresses are configured in the matching block below.
+# stdout | file | loki | elasticsearch | fluentbit
+exporters:
+  - stdout
+  - file
+# loki:
+#   url: "http://localhost:3100"
+#   labels:
+#     job: haribon
+#     env: prod
+# elasticsearch:
+#   url: "http://localhost:9200"
+#   index: haribon
+# fluentbit:
+#   addr: "localhost:24224"
+
 shutdown_timeout_sec: 15
 
 # Balancer strategy: round_robin | weighted_round_robin | least_connections | random | ip_hash
@@ -17,7 +38,8 @@ health:
   healthy_threshold: 1
   unhealthy_threshold: 2
 
-# Retry policy (idempotent methods only: GET, HEAD, PUT, DELETE, OPTIONS)
+# Retry policy. Only methods that are safe to repeat are retried:
+# GET, HEAD, PUT, DELETE, OPTIONS. POST and PATCH never are.
 retry:
   max_retries: 1
 
@@ -26,14 +48,18 @@ breaker:
   failure_threshold: 5
   cooldown_sec: 30
 
-# Backend auto-discovery (optional)
+# Backend auto-discovery (optional). Discovered backends are added to the
+# backends list below and removed again when they disappear from the source.
 # discovery:
 #   provider: static  # static | dns | file
 #   dns_name: "api.internal"
+#   dns_port: 80      # port stamped onto resolved addresses
 #   file_path: "/etc/haribon/backends.json"
 #   refresh_sec: 30
 
-# Cluster gossip health sharing (optional)
+# Replicas sharing what they find (optional). When enabled, a backend one
+# replica cannot reach is skipped by all of them. node_id must be different on
+# every replica; ${HOSTNAME} is the container or pod name.
 # cluster:
 #   enabled: false
 #   node_id: "${HOSTNAME}"
@@ -43,10 +69,11 @@ breaker:
 #   gossip_interval_sec: 5
 #   gossip_addr: "0.0.0.0:7946"
 
+# weight: 0 (or omitted) means 1. Used by weighted_round_robin.
 backends:
- - url: "http://localhost:4441"
-   weight: 1
- - url: "http://localhost:4442"
-   weight: 1
- - url: "http://localhost:4443"
-   weight: 4
+  - url: "http://localhost:4441"
+    weight: 1
+  - url: "http://localhost:4442"
+    weight: 1
+  - url: "http://localhost:4443"
+    weight: 4

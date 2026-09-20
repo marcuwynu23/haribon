@@ -1,6 +1,12 @@
-# DNS-based backend discovery
-# Backends are resolved dynamically from DNS
-# Use for k8s, auto-scaling environments
+# Get the backend list from DNS instead of writing it here.
+#
+# Useful when the servers behind a name change without you editing a config
+# file — autoscaling groups, Kubernetes Services, a database of instances.
+#
+# There are no `backends:` here, so the pool is whatever DNS returns. Until the
+# first lookup succeeds the pool is empty and every request gets a 503; after
+# that, Haribon polls every `refresh_sec` and adds and removes servers as the
+# answer changes.
 host: "0.0.0.0"
 port: 4444
 
@@ -10,7 +16,17 @@ balancer:
 discovery:
   provider: dns
   dns_name: "api.internal"
+  # DNS gives back bare addresses like 10.0.0.7, which are not usable as a
+  # backend URL on their own. This port is attached to each one. Set it to the
+  # port your servers actually listen on — the default is 80.
+  dns_port: 8080
   refresh_sec: 30
+
+# Only A and AAAA records are read. SRV records are not supported, so a name
+# pointing at SRV records will resolve to nothing usable and be skipped.
+#
+# A lookup that fails — the name is temporarily unresolvable, DNS is down — is
+# logged and retried on the next poll. It does not empty the pool.
 
 health:
   enabled: true

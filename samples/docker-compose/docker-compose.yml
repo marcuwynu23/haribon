@@ -9,31 +9,39 @@
 # Topology:
 #   client → haribon-lb:4444 → [haribon-0, haribon-1, haribon-2] → backends
 #                    ↕ gossip :7946
+#
+# Only the load balancer is published on 4444. Each replica is reachable on
+# 4445/4446/4447 for debugging, and publishes its gossip port so you can watch
+# the UDP traffic from the host.
+#
+# The backends are hashicorp/http-echo: each answers 200 to every path and
+# prints its own name, so health probes pass and you can see which backend
+# served a request.
 
 version: "3.8"
 
 services:
   backend1:
-    image: node:20-alpine
-    command: sh -c "npm install -g http-server && http-server /usr/share/nginx/html -p 8080"
+    image: hashicorp/http-echo
+    command: ["-text=backend-1", "-listen=:5678"]
     ports:
-      - "8081:8080"
+      - "8081:5678"
     networks:
       - haribon-net
 
   backend2:
-    image: node:20-alpine
-    command: sh -c "npm install -g http-server && http-server /usr/share/nginx/html -p 8080"
+    image: hashicorp/http-echo
+    command: ["-text=backend-2", "-listen=:5678"]
     ports:
-      - "8082:8080"
+      - "8082:5678"
     networks:
       - haribon-net
 
   backend3:
-    image: node:20-alpine
-    command: sh -c "npm install -g http-server && http-server /usr/share/nginx/html -p 8080"
+    image: hashicorp/http-echo
+    command: ["-text=backend-3", "-listen=:5678"]
     ports:
-      - "8083:8080"
+      - "8083:5678"
     networks:
       - haribon-net
 
@@ -41,7 +49,7 @@ services:
     image: ghcr.io/marcuwynu23/haribon:latest
     command: start --config /etc/haribon/haribon-cluster.yml
     ports:
-      - "4444:4444"
+      - "4445:4444"
       - "7946:7946/udp"
     environment:
       - NODE_ID=haribon-0
@@ -61,7 +69,7 @@ services:
     image: ghcr.io/marcuwynu23/haribon:latest
     command: start --config /etc/haribon/haribon-cluster.yml
     ports:
-      - "4445:4444"
+      - "4446:4444"
       - "7947:7946/udp"
     environment:
       - NODE_ID=haribon-1
@@ -81,7 +89,7 @@ services:
     image: ghcr.io/marcuwynu23/haribon:latest
     command: start --config /etc/haribon/haribon-cluster.yml
     ports:
-      - "4446:4444"
+      - "4447:4444"
       - "7948:7946/udp"
     environment:
       - NODE_ID=haribon-2
@@ -114,10 +122,12 @@ networks:
   haribon-net:
     driver: bridge
 
-# Health check:
+# Health check (replicas are published on 4445-4447 from the host):
+#   curl -s http://localhost:4445/readyz
+#   curl -s http://localhost:4445/metrics | grep cluster
 #   docker-compose -f docker-compose.yml exec haribon-0 curl -s http://localhost:4444/readyz
-#   docker-compose -f docker-compose.yml exec haribon-0 curl -s http://localhost:4444/metrics | grep cluster
 #
 # Chaos test:
 #   docker-compose -f docker-compose.yml stop haribon-0
-#   Verify traffic still flows through remaining replicas
+#   Verify traffic still flows through remaining replicas, and that
+#   haribon_cluster_peers drops on the survivors.

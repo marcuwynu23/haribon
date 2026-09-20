@@ -1,5 +1,7 @@
-# IP hash strategy for session affinity
-# Same client IP always maps to the same backend
+# Send the same visitor to the same backend.
+#
+# Haribon hashes the visitor's address to pick a backend, so a visitor keeps
+# landing on the one that already has their session or their cache entry.
 host: "0.0.0.0"
 port: 4444
 
@@ -11,5 +13,14 @@ backends:
   - url: "http://backend2:8080"
   - url: "http://backend3:8080"
 
-# Session affinity works best when client count >> backend count
-# and clients connect from a limited set of IPs
+# Two things to know before relying on this:
+#
+# 1. Haribon uses the address the request arrives from. If a proxy, a cloud
+#    load balancer, or an ingress is in front of it, every request may arrive
+#    from that one address and every visitor hashes to the same backend. Check
+#    what Haribon sees before trusting the pinning.
+#
+# 2. The mapping is stable only while the backend list is unchanged. Adding or
+#    removing a backend remaps some visitors, so plan for a cache warm-up after
+#    a scale event. A visitor whose backend goes down falls through to the next
+#    available one rather than getting an error.
