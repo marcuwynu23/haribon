@@ -31,6 +31,11 @@ func (c *Counter) Inc()        { atomic.AddInt64(&c.v, 1) }
 func (c *Counter) Add(n int64) { atomic.AddInt64(&c.v, n) }
 func (c *Counter) Load() int64 { return atomic.LoadInt64(&c.v) }
 
+// Set overwrites the counter with an externally tracked absolute value.
+// Used to mirror a count that already lives elsewhere (e.g. the cluster node's
+// config-mismatch tally) without maintaining a second increment path.
+func (c *Counter) Set(n int64) { atomic.StoreInt64(&c.v, n) }
+
 // Gauge is a settable int64 (e.g. healthy=1/0, active_conns).
 type Gauge struct{ v int64 }
 
