@@ -1,0 +1,130 @@
+# Local cluster setup with docker-compose
+# Run 3 Haribon replicas behind a load balancer for HA testing
+#
+# Usage:
+#   cd samples/docker-compose && docker-compose up -d
+#   docker-compose ps
+#   docker-compose down
+#
+# Topology:
+#   client → haribon-lb:4444 → [haribon-0, haribon-1, haribon-2] → backends
+#                    ↕ gossip :7946
+
+version: "3.8"
+
+services:
+  # Backend servers (for testing)
+  backend1:
+    image: node:20-alpine
+    command: sh -c "npm install -g http-server && http-server /usr/share/nginx/html -p 8080"
+    ports:
+      - "8081:8080"
+    networks:
+      - haribon-net
+
+  backend2:
+    image: node:20-alpine
+    command: sh -c "npm install -g http-server && http-server /usr/share/nginx/html -p 8080"
+    ports:
+      - "8082:8080"
+    networks:
+      - haribon-net
+
+  backend3:
+    image: node:20-alpine
+    command: sh -c "npm install -g http-server && http-server /usr/share/nginx/html -p 8080"
+    ports:
+      - "8083:8080"
+    networks:
+      - haribon-net
+
+  # Haribon replicas with gossip clustering
+  haribon-0:
+    image: ghcr.io/marcuwynu23/haribon:latest
+    command: start --config /etc/haribon/haribon-cluster.yml
+    ports:
+      - "4444:4444"
+      - "7946:7946/udp"
+    environment:
+      - NODE_ID=haribon-0
+      - HARIBON_PORT=4444
+    volumes:
+      - ./haribon-cluster.yml:/etc/haribon/haribon-cluster.yml
+    depends_on:
+      - backend1
+      - backend2
+      - backend3
+    networks:
+      - haribon-net
+    deploy:
+      replicas: 1
+
+  haribon-1:
+    image: ghcr.io/marcuwynu23/haribon:latest
+    command: start --config /etc/haribon/haribon-cluster.yml
+    ports:
+      - "4445:4444"
+      - "7947:7946/udp"
+    environment:
+      - NODE_ID=haribon-1
+      - HARIBON_PORT=4444
+    volumes:
+      - ./haribon-cluster.yml:/etc/haribon/haribon-cluster.yml
+    depends_on:
+      - backend1
+      - backend2
+      - backend3
+    networks:
+      - haribon-net
+    deploy:
+      replicas: 1
+
+  haribon-2:
+    image: ghcr.io/marcuwynu23/haribon:latest
+    command: start --config /etc/haribon/haribon-cluster.yml
+    ports:
+      - "4446:4444"
+      - "7948:7946/udp"
+    environment:
+      - NODE_ID=haribon-2
+      - HARIBON_PORT=4444
+    volumes:
+      - ./haribon-cluster.yml:/etc/haribon/haribon-cluster.yml
+    depends_on:
+      - backend1
+      - backend2
+      - backend3
+    networks:
+      - haribon-net
+    deploy:
+      replicas: 1
+
+  # Load balancer in front of Haribon replicas
+  haribon-lb:
+    image: nginx:alpine
+    ports:
+      - "4444:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - haribon-0
+      - haribon-1
+      - haribon-2
+    networks:
+      - haribon-net
+
+networks:
+  haribon-net:
+    driver: bridge
+
+# Health check command:
+#   docker-compose exec haribon-0 curl -s http://localhost:4444/readyz
+#   docker-compose exec haribon-0 curl -s http://localhost:4444/metrics | grep cluster
+#
+# Chaos test:
+#   docker-compose stop haribon-0
+#   Verify traffic still flows through remaining replicas
+#
+# To test gossip:
+#   docker-compose logs haribon-0 | grep gossip
+#   docker-compose logs haribon-1 | grep gossip

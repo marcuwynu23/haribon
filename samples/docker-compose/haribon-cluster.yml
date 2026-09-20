@@ -1,0 +1,36 @@
+# Cluster config for docker-compose deployment
+# Copy this file to samples/docker-compose/haribon-cluster.yml
+host: "0.0.0.0"
+port: 4444
+balancer:
+  strategy: round_robin
+
+# Backend pool (same network in docker-compose)
+backends:
+  - url: "http://backend1:8080"
+    weight: 1
+  - url: "http://backend2:8080"
+    weight: 1
+  - url: "http://backend3:8080"
+    weight: 1
+
+# Cluster gossip health sharing
+cluster:
+  enabled: true
+  node_id: "${NODE_ID}"
+  peers:
+    - "haribon-0:7946"
+    - "haribon-1:7946"
+    - "haribon-2:7946"
+  gossip_interval_sec: 5
+  gossip_addr: "0.0.0.0:7946"
+
+# Active health checking
+health:
+  enabled: true
+  interval_sec: 5
+  timeout_sec: 2
+  path: /healthz
+
+logging: true
+log_format: json

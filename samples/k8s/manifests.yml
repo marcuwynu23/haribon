@@ -25,8 +25,6 @@ spec:
               name: gossip
               protocol: UDP
           env:
-            - name: HARIBON_CONFIG
-              value: /etc/haribon/config.yml
             - name: NODE_ID
               valueFrom:
                 fieldRef:
@@ -34,30 +32,39 @@ spec:
                   fieldPath: metadata.name
             - name: HARIBON_PORT
               value: "4444"
+            - name: HARIBON_CONFIG
+              value: /etc/haribon/config.yml
           volumeMounts:
             - name: config
               mountPath: /etc/haribon
-            - name: gossip-config
-              mountPath: /etc/haribon/cluster
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 4444
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 4444
+            initialDelaySeconds: 15
+            periodSeconds: 20
       volumes:
         - name: config
           configMap:
             name: haribon-config
-        - name: gossip-config
-          configMap:
-            name: haribon-cluster
-      readinessProbe:
-        httpGet:
-          path: /readyz
-          port: 4444
-        initialDelaySeconds: 5
-        periodSeconds: 10
-      livenessProbe:
-        httpGet:
-          path: /healthz
-          port: 4444
-        initialDelaySeconds: 15
-        periodSeconds: 20
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - haribon
+                topologyKey: kubernetes.io/hostname
 ---
 apiVersion: v1
 kind: Service
@@ -127,3 +134,40 @@ spec:
   selector:
     matchLabels:
       app: haribon
+---
+# ConfigMap for cluster configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: haribon-config
+data:
+  config.yml: |
+    host: "0.0.0.0"
+    port: 4444
+    balancer:
+      strategy: round_robin
+    cluster:
+      enabled: true
+      node_id: "${NODE_ID}"
+      peers:
+        - "haribon-0:7946"
+        - "haribon-1:7946"
+        - "haribon-2:7946"
+      gossip_interval_sec: 5
+      gossip_addr: "0.0.0.0:7946"
+    health:
+      enabled: true
+      interval_sec: 5
+      timeout_sec: 2
+---
+# ConfigMap for cluster gossip config
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: haribon-cluster
+data:
+  cluster.yml: |
+    cluster:
+      enabled: true
+      gossip_interval_sec: 5
+      gossip_addr: "0.0.0.0:7946"
