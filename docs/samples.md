@@ -1,4 +1,4 @@
-# Samples and Deployment Examples
+﻿# Samples and Deployment Examples
 
 This page references all sample configurations and deployment manifests shipped with Haribon.
 
@@ -8,7 +8,7 @@ All samples live in `samples/` directory. Copy any sample as a starting point fo
 
 ### Basic Round-Robin
 
-Simplest possible configuration — 3 backends, no extra features.
+Simplest possible configuration â€” 3 backends, no extra features.
 
 ```yaml
 host: "0.0.0.0"
@@ -74,7 +74,7 @@ cluster:
 Local cluster deployment with 3 Haribon replicas and nginx load balancer.
 
 ```bash
-cd docker-compose
+cd samples/docker-compose
 docker-compose -f docker-compose.yml up -d
 ```
 
@@ -139,3 +139,4 @@ See `samples/production.yml` for the complete example.
 | Health sharing | No | No | No | Yes |
 | Min replicas | 1 | 1 | 1 | 3 |
 | Protocol | HTTP | HTTP | HTTP | HTTP + UDP 7946 |
+

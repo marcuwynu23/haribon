@@ -1,13 +1,13 @@
-# Haribon User Guide
+﻿# Haribon User Guide
 
 ## Overview
 
-Haribon is a lightweight Go-based Layer 7 (HTTP) load balancer designed for production environments. It supports multiple balancing algorithms, health-aware routing, circuit breakers, retry policies, and Prometheus metrics — all configurable via YAML without code changes.
+Haribon is a lightweight Go-based Layer 7 (HTTP) load balancer designed for production environments. It supports multiple balancing algorithms, health-aware routing, circuit breakers, retry policies, and Prometheus metrics â€” all configurable via YAML without code changes.
 
 **Key Features:**
 - **Pluggable balancing strategies**: round_robin, weighted_round_robin, least_connections, random, ip_hash
 - **Active health checking** with configurable thresholds
-- **Circuit breaker** per backend (FSM: closed → open → half-open → closed)
+- **Circuit breaker** per backend (FSM: closed â†’ open â†’ half-open â†’ closed)
 - **Retry policy** for idempotent methods (GET, HEAD, PUT, DELETE, OPTIONS)
 - **Prometheus metrics** endpoint (`/metrics`)
 - **Structured JSON logs** compatible with Loki/Promtail
@@ -215,7 +215,7 @@ haribon start --config haribon-config.yml --watch_config 30
 
 - **In-flight requests** complete on the previous config snapshot
 - **Backend list, weights, TLS certs, log level** swap atomically
-- **Failed reloads** log `level:error` and keep the old config — never crash
+- **Failed reloads** log `level:error` and keep the old config â€” never crash
 - **Listener address/port changes** require a restart
 - **All-unhealthy** scenario returns `503 All backend servers failed`
 
@@ -330,7 +330,7 @@ cluster:
 #### Docker Compose (Local Cluster)
 
 ```bash
-cd docker-compose
+cd samples/docker-compose
 docker-compose -f docker-compose.yml up -d
 ```
 
