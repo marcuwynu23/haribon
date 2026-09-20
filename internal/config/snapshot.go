@@ -2,6 +2,8 @@ package config
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
@@ -90,10 +92,32 @@ func (s *Snapshot) Watch(ctx context.Context, path string, watchSecs int) {
 	}
 }
 
-// StartWatcher starts a goroutine that watches for SIGHUP signals
-// and optionally polls the config file at the given interval.
-// It returns a cleanup function.
-func StartWatcher(snapshot *Snapshot, path string, watchSecs int, stopCh <-chan struct{}) {
+// FileHash returns the hex SHA-256 of a config file's contents, or "" when the
+// file cannot be read. Used only for the cluster config-drift check, so a read
+// failure is deliberately not fatal.
+func FileHash(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// StartWatcherHook watches for SIGHUP signals and optionally polls the config
+// file at the given interval. When onReload is non-nil it is called with the
+// freshly-loaded config *after* the snapshot has been swapped, so the caller
+// can rebuild live routing state (balancer, breaker, backend pool).
+//
+// Note: SIGHUP is a Unix concept. Go on Windows never delivers it, so
+// --watch_config is the only working trigger there.
+func StartWatcherHook(
+	snapshot *Snapshot,
+	path string,
+	watchSecs int,
+	stopCh <-chan struct{},
+	onReload func(Config),
+) {
 	go func() {
 		var poll *time.Ticker
 		var pollCh <-chan time.Time
@@ -107,27 +131,35 @@ func StartWatcher(snapshot *Snapshot, path string, watchSecs int, stopCh <-chan 
 		signal.Notify(sighup, syscall.SIGHUP)
 		defer signal.Stop(sighup)
 
+		reload := func() {
+			if err := snapshot.Reload(path); err != nil {
+				log.Printf("config reload error: %v", err)
+				return
+			}
+			log.Printf("config reloaded: %s", path)
+			if onReload != nil {
+				onReload(snapshot.Load())
+			}
+		}
+
 		for {
 			select {
 			case <-stopCh:
 				return
 			case <-sighup:
-				if err := snapshot.Reload(path); err != nil {
-					log.Printf("config reload error: %v", err)
-				} else {
-					log.Printf("config reloaded: %s", path)
-				}
+				reload()
 			case <-pollCh:
-				if watchSecs > 0 {
-					if err := snapshot.Reload(path); err != nil {
-						log.Printf("config reload error: %v", err)
-					} else {
-						log.Printf("config reloaded: %s", path)
-					}
-				}
+				reload()
 			}
 		}
 	}()
+}
+
+// StartWatcher starts a goroutine that watches for SIGHUP signals and
+// optionally polls the config file. It swaps the snapshot but does not notify
+// a caller — see StartWatcherHook when live state must be rebuilt too.
+func StartWatcher(snapshot *Snapshot, path string, watchSecs int, stopCh <-chan struct{}) {
+	StartWatcherHook(snapshot, path, watchSecs, stopCh, nil)
 }
 
 // BackendsFromConfig extracts host strings from the config.

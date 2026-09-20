@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://haribon.marcuwynu23.com/schemas/haribon-config",
   "title": "Haribon Configuration",
-  "description": "Configuration schema for the Haribon Layer 7 load balancer",
+  "description": "Configuration schema for the Haribon HTTP load balancer",
   "type": "object",
   "required": [],
   "properties": {
@@ -20,8 +20,8 @@
     },
     "logging": {
       "type": "boolean",
-      "default": true,
-      "description": "Enable structured JSON logging"
+      "default": false,
+      "description": "Write request logs to log_path as well as stdout"
     },
     "log_path": {
       "type": "string",
@@ -41,7 +41,33 @@
         "enum": ["stdout", "file", "loki", "fluentbit", "elasticsearch"]
       },
       "default": ["stdout"],
-      "description": "Log exporters to enable"
+      "description": "Log destinations to enable. Addresses come from the loki, elasticsearch and fluentbit blocks."
+    },
+    "loki": {
+      "type": "object",
+      "properties": {
+        "url": { "type": "string", "default": "http://localhost:3100" },
+        "labels": {
+          "type": "object",
+          "description": "Extra Loki stream labels; job is always set to haribon"
+        }
+      },
+      "additionalProperties": false
+    },
+    "elasticsearch": {
+      "type": "object",
+      "properties": {
+        "url": { "type": "string", "default": "http://localhost:9200" },
+        "index": { "type": "string", "default": "haribon" }
+      },
+      "additionalProperties": false
+    },
+    "fluentbit": {
+      "type": "object",
+      "properties": {
+        "addr": { "type": "string", "default": "localhost:24224" }
+      },
+      "additionalProperties": false
     },
     "shutdown_timeout_sec": {
       "type": "integer",
@@ -57,14 +83,13 @@
         "properties": {
           "url": {
             "type": "string",
-            "format": "uri",
             "description": "Backend URL (http or https)"
           },
           "weight": {
             "type": "integer",
-            "minimum": 1,
+            "minimum": 0,
             "default": 1,
-            "description": "Weight for weighted round-robin"
+            "description": "Weight for weighted round-robin. 0 means unset and is treated as 1."
           }
         },
         "additionalProperties": false
@@ -123,6 +148,13 @@
           "type": "string",
           "description": "DNS name for DNS-based discovery"
         },
+        "dns_port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 80,
+          "description": "Port stamped onto resolved DNS addresses"
+        },
         "file_path": {
           "type": "string",
           "description": "Path to JSON file for file-based discovery"
@@ -138,6 +170,25 @@
       "additionalProperties": false,
       "description": "Backend auto-discovery configuration"
     },
+    "cluster": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "node_id": {
+          "type": "string",
+          "description": "Unique node identifier, typically the hostname"
+        },
+        "peers": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Peer gossip addresses, host:port"
+        },
+        "gossip_interval_sec": { "type": "integer", "minimum": 1, "default": 5 },
+        "gossip_addr": { "type": "string", "default": "0.0.0.0:7946" }
+      },
+      "additionalProperties": false,
+      "description": "Gossip-based health sharing between Haribon replicas"
+    },
     "admin": {
       "type": "object",
       "properties": {
@@ -145,7 +196,8 @@
         "addr": { "type": "string", "default": "127.0.0.1:4445" },
         "token": { "type": "string" }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "NOT IMPLEMENTED - parsed for forward compatibility, no admin server is started"
     }
   },
   "additionalProperties": false
