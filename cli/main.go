@@ -19,7 +19,10 @@ import (
 	"syscall"
 	"time"
 
+	"gopkg.in/yaml.v2"
+
 	"github.com/marcuwynu23/haribon/internal/balancer"
+	"github.com/marcuwynu23/haribon/internal/cluster"
 	"github.com/marcuwynu23/haribon/internal/config"
 	"github.com/marcuwynu23/haribon/internal/discover"
 	"github.com/marcuwynu23/haribon/internal/health"
@@ -57,7 +60,8 @@ type LogEntry struct {
 
 var (
 	backends      []string
-	currentServer uint64 // used only by legacy getNextBackend in tests
+	backendsMu    sync.RWMutex // guards backends; production writes on rebuild
+	currentServer uint64       // used only by legacy getNextBackend in tests
 
 	httpClient = &http.Client{
 		Timeout: 5 * time.Second,
@@ -69,6 +73,8 @@ var (
 	}
 
 	logWriter io.Writer = os.Stdout
+	logSinks            = logging.NewMulti() // remote exporters + file, if any
+	logFormat           = "json"             // json | text
 	mu        sync.Mutex
 )
 
@@ -76,6 +82,21 @@ var (
 	backendHealth = map[string]bool{}
 	healthMutex   sync.RWMutex
 )
+
+// setBackends replaces the process-wide backend pool. Called on every successful
+// rebuild so /readyz and the legacy helpers track the live pool.
+func setBackends(urls []string) {
+	backendsMu.Lock()
+	defer backendsMu.Unlock()
+	backends = append([]string(nil), urls...)
+}
+
+// getBackends returns a copy of the current pool.
+func getBackends() []string {
+	backendsMu.RLock()
+	defer backendsMu.RUnlock()
+	return append([]string(nil), backends...)
+}
 
 // ==========================
 // HEALTH STATE HELPERS
@@ -101,6 +122,38 @@ func isHealthy(b string) bool {
 
 func writeLog(entry LogEntry) {
 	entry.Time = time.Now().UTC().Format(time.RFC3339Nano)
+
+	// Remote sinks (Loki, Elasticsearch, Fluent Bit) and the log file each own a
+	// bounded queue; Write never blocks, so a dead sink cannot stall a request.
+	if logSinks != nil && logSinks.Name() != "" {
+		logSinks.Write(logging.LogEntry{
+			Time:       entry.Time,
+			Method:     entry.Method,
+			Path:       entry.Path,
+			Backend:    entry.Backend,
+			Status:     entry.Status,
+			DurationMS: entry.DurationMS,
+			Retries:    entry.Retries,
+			Level:      entry.Level,
+		})
+	}
+
+	if logFormat == "text" {
+		mu.Lock()
+		defer mu.Unlock()
+		_, _ = fmt.Fprintln(logWriter, logging.FormatText(logging.LogEntry{
+			Time:       entry.Time,
+			Method:     entry.Method,
+			Path:       entry.Path,
+			Backend:    entry.Backend,
+			Status:     entry.Status,
+			DurationMS: entry.DurationMS,
+			Retries:    entry.Retries,
+			Level:      entry.Level,
+		}))
+		return
+	}
+
 	b, err := json.Marshal(entry)
 	if err != nil {
 		return
@@ -116,13 +169,14 @@ func writeLog(entry LogEntry) {
 // ==========================
 
 func getNextBackend() (string, error) {
-	if len(backends) == 0 {
+	pool := getBackends()
+	if len(pool) == 0 {
 		return "", fmt.Errorf("no backends configured")
 	}
-	n := len(backends)
+	n := len(pool)
 	start := atomic.AddUint64(&currentServer, 1) - 1
 	for i := 0; i < n; i++ {
-		b := backends[(int(start)+i)%n]
+		b := pool[(int(start)+i)%n]
 		if isHealthy(b) {
 			return b, nil
 		}
@@ -139,33 +193,17 @@ type balancerHealthChecker struct{}
 func (balancerHealthChecker) HasHealthyBackend() bool {
 	healthMutex.RLock()
 	defer healthMutex.RUnlock()
-	if len(backends) == 0 {
+	pool := getBackends()
+	if len(pool) == 0 {
 		return false
 	}
-	for _, b := range backends {
+	for _, b := range pool {
 		v, known := backendHealth[b]
 		if !known || v {
 			return true
 		}
 	}
 	return false
-}
-
-// compositeHealthChecker bridges the balancer.HealthChecker interface and
-// the circuit breaker: a backend is available only if both the health map
-// and the breaker agree.
-type compositeHealthChecker struct {
-	breaker *health.Registry
-}
-
-func (c compositeHealthChecker) IsAvailable(backend string) bool {
-	if !isHealthy(backend) {
-		return false
-	}
-	if c.breaker != nil {
-		return c.breaker.IsAvailable(backend)
-	}
-	return true
 }
 
 // ==========================
@@ -242,7 +280,9 @@ func startCommand(args []string) {
 	fs.IntVar(&watchSecs, "watch_config", 0, "poll config file every N seconds")
 	_ = fs.Parse(args)
 
-	cfg, err := config.Load(config.ResolveConfigPath(configPath))
+	path := config.ResolveConfigPath(configPath)
+
+	cfg, err := config.Load(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
 		os.Exit(1)
@@ -254,114 +294,77 @@ func startCommand(args []string) {
 	}
 	config.Defaults(&cfg)
 
-	// Create atomic snapshot
+	// Logging must be wired before anything can emit a log line.
+	setupLogging(cfg)
+
+	// Atomic snapshot: the watcher swaps it, the runtime reads it.
 	snapshot := config.NewSnapshot(cfg)
 
-	// Set up discovery provider
-	stopCh := make(chan struct{})
-	defer close(stopCh)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// Metrics registry.
+	reg := metrics.New()
+
+	// Cluster node (gossip). Started only when configured; the runtime consults
+	// it as one more opinion on whether a backend is healthy.
+	var node *cluster.Node
+	if cfg.Cluster.Enabled {
+		node = cluster.NewNode(cfg.Cluster.NodeID, cfg.Cluster.GossipAddr, cfg.Cluster.Peers, cfg.Cluster.GossipSec)
+		node.SetConfigHash(config.FileHash(path))
+		if err := node.Start(); err != nil {
+			// Refuse to run with clustering half-up: a node that sends gossip but
+			// cannot receive any looks healthy to its peers while silently
+			// ignoring every health update they send.
+			fmt.Fprintf(os.Stderr, "cluster error: %v\n", err)
+			os.Exit(1)
+		}
+		defer node.Stop()
+		log.Printf("cluster: node %s joining %d peer(s) on %s",
+			cfg.Cluster.NodeID, len(cfg.Cluster.Peers), cfg.Cluster.GossipAddr)
+	}
+
+	// The swappable runtime replaces the old build-once wiring: reloads and
+	// discovery updates now rebuild the pool and publish it atomically.
+	rt := newRuntime(ctx, path, snapshot, reg, node)
+
+	// Backend discovery. Primed before the first rebuild so the initial pool
+	// already contains discovered backends rather than only what the config
+	// file lists.
 	var provider discover.Provider
-	if cfg.Discovery.Provider != "" {
+	if cfg.Discovery.Provider != "" && cfg.Discovery.Provider != "static" {
 		provider, err = discover.NewProvider(
 			discover.Config{
 				Provider:   cfg.Discovery.Provider,
 				DNSName:    cfg.Discovery.DNSName,
+				DNSPort:    cfg.Discovery.DNSPort,
 				FilePath:   cfg.Discovery.FilePath,
 				RefreshSec: cfg.Discovery.RefreshSec,
 			},
-			stopCh,
+			ctx.Done(),
 		)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "discovery error: %v\n", err)
 			os.Exit(1)
 		}
-		if provider != nil {
-			discovered, err := provider.Discover()
-			if err == nil && len(discovered) > 0 {
-				log.Printf("discovery: found %d backends", len(discovered))
-				for i, url := range discovered {
-					if i < len(cfg.Backends) {
-						cfg.Backends[i].Host = url
-					}
-				}
-				_ = snapshot.Reload(config.ResolveConfigPath(configPath))
-			}
-			go provider.Watch(stopCh)
-		}
+		defer func() { _ = provider.Close() }()
+		rt.StartDiscovery(provider)
+		log.Printf("discovery: provider %s (refresh %ds)", cfg.Discovery.Provider, cfg.Discovery.RefreshSec)
 	}
 
-	// Wire SIGHUP watcher
-	config.StartWatcher(snapshot, config.ResolveConfigPath(configPath), watchSecs, stopCh)
+	// Build the first generation: config backends plus anything discovery found.
+	rt.rebuild(cfg)
 
-	// Populate legacy globals (tests + readyz probe)
-	for _, b := range config.BackendsFromConfig(snapshot.Load()) {
-		backends = append(backends, b)
-	}
+	// Config hot reload: SIGHUP and/or polling. The hook fires after the
+	// snapshot swap so live routing state is rebuilt too.
+	config.StartWatcherHook(snapshot, path, watchSecs, ctx.Done(), rt.OnConfigReload)
 
-	// Logging
-	setupLogging(cfg)
+	rt.StartClusterMetrics()
 
-	// Shutdown timeout
-	shutdownTimeout := time.Duration(cfg.ShutdownTimeoutSec) * time.Second
-	if shutdownTimeout <= 0 {
-		shutdownTimeout = 15 * time.Second
-	}
-
-	// Metrics registry
-	reg := metrics.New()
-	backendEntries := config.BackendEntriesFromConfig(snapshot.Load())
-	entries := make([]balancer.BackendEntry, len(backendEntries))
-	for i, b := range backendEntries {
-		entries[i] = balancer.BackendEntry{URL: b.URL, Weight: b.Weight}
-	}
-	for _, b := range entries {
-		reg.Gauge(metrics.MetricName("haribon_backend_healthy", "backend", b.URL)).Set(1)
-		reg.Gauge(metrics.MetricName("haribon_breaker_state", "backend", b.URL)).Set(0)
-	}
-
-	// Balancer
-	bal, err := balancer.New(cfg.Balancer.Strategy, entries)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "balancer error: %v\n", err)
-		os.Exit(1)
-	}
-	log.Printf("balancer strategy: %s", cfg.Balancer.Strategy)
-
-	// Circuit breaker registry
-	breakerURLs := config.BackendsFromConfig(snapshot.Load())
-	breakerLog := func(backend, state, reason string) {
-		writeLog(LogEntry{
-			Method:  "BREAKER",
-			Path:    "circuit-breaker",
-			Backend: backend,
-			Status:  0,
-			Level:   "warn",
-		})
-		if reg != nil {
-			v := int64(0) // closed=0, open=1, half_open=2
-			switch state {
-			case "open":
-				v = 1
-			case "half_open":
-				v = 2
-			}
-			reg.Gauge(metrics.MetricName("haribon_breaker_state", "backend", backend)).Set(v)
-		}
-		_ = reason
-	}
-	breakerReg := health.NewRegistry(
-		breakerURLs,
-		cfg.Breaker.FailureThreshold,
-		time.Duration(cfg.Breaker.CooldownSec)*time.Second,
-		breakerLog,
-	)
-
-	// Composite health checker (health map + breaker)
-	hc := compositeHealthChecker{breaker: breakerReg}
-
-	// Proxy handler
+	// Proxy handler. One object satisfies Balancer, HealthChecker, IPHash, and
+	// BreakRecorder, so it always sees the newest generation.
 	proxyHandler := proxy.New(
-		bal, hc, breakerReg,
+		rt.sw, rt.sw, rt.sw,
 		httpClient,
 		proxy.Config{
 			HandlerTimeout: 10 * time.Second,
@@ -376,36 +379,13 @@ func startCommand(args []string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", health.Healthz)
 	mux.HandleFunc("/readyz", health.Readyz(balancerHealthChecker{}))
-	mux.Handle("/metrics", reg.Handler())
+	mux.Handle("/metrics", activeConnsHandler(rt, reg))
 	mux.Handle("/", proxyHandler)
 
 	srv := &http.Server{
 		Addr:           addr,
 		Handler:        mux,
 		MaxHeaderBytes: 1 << 20,
-	}
-
-	// Context for graceful shutdown + active health scheduler
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	// Active health scheduler (if enabled)
-	if cfg.Health.Enabled {
-		sched := health.NewScheduler(
-			config.BackendsFromConfig(snapshot.Load()),
-			health.SchedulerConfig{
-				IntervalSec:        cfg.Health.IntervalSec,
-				TimeoutSec:         cfg.Health.TimeoutSec,
-				Path:               cfg.Health.Path,
-				HealthyThreshold:   cfg.Health.HealthyThreshold,
-				UnhealthyThreshold: cfg.Health.UnhealthyThreshold,
-			},
-			setHealth,
-			makeHealthLogger(reg),
-			nil,
-		)
-		go sched.Run(ctx)
-		log.Printf("active health scheduler started (interval: %ds)", cfg.Health.IntervalSec)
 	}
 
 	go func() {
@@ -419,13 +399,39 @@ func startCommand(args []string) {
 	<-ctx.Done()
 	stop()
 
+	shutdownTimeout := time.Duration(cfg.ShutdownTimeoutSec) * time.Second
+	if shutdownTimeout <= 0 {
+		shutdownTimeout = 15 * time.Second
+	}
+
 	log.Printf("shutting down (timeout: %s)…\n", shutdownTimeout)
 	shutCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(shutCtx); err != nil {
 		fmt.Fprintf(os.Stderr, "shutdown error: %v\n", err)
 	}
+	// Flush buffered log entries before the process exits.
+	if logSinks != nil {
+		logSinks.Close()
+	}
 	log.Println("shutdown complete")
+}
+
+// activeConnsHandler refreshes the haribon_active_conns gauge immediately before
+// rendering, so the value in the response is current rather than one scrape
+// stale. Balancers that do not track connections simply contribute nothing.
+func activeConnsHandler(rt *runtime, reg *metrics.Registry) http.HandlerFunc {
+	render := reg.Handler()
+	return func(w http.ResponseWriter, r *http.Request) {
+		if e := rt.sw.load(); e != nil {
+			if cr, ok := e.bal.(balancer.ConnsReporter); ok {
+				for url, n := range cr.ActiveConns() {
+					reg.Gauge(metrics.MetricName("haribon_active_conns", "backend", url)).Set(n)
+				}
+			}
+		}
+		render(w, r)
+	}
 }
 
 // ==========================
@@ -468,10 +474,14 @@ func checkCommand(args []string) {
 func validateCommand(args []string) {
 	fs := flag.NewFlagSet("validate", flag.ExitOnError)
 	var configPath string
+	var schemaPath string
 	fs.StringVar(&configPath, "config", "", "config file path")
+	fs.StringVar(&schemaPath, "schema", "", "JSON schema path (default: schema/haribon-config.schema.json)")
 	_ = fs.Parse(args)
 
-	cfg, err := config.Load(config.ResolveConfigPath(configPath))
+	path := config.ResolveConfigPath(configPath)
+
+	cfg, err := config.Load(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -482,21 +492,50 @@ func validateCommand(args []string) {
 		os.Exit(1)
 	}
 	config.Defaults(&cfg)
-	if err := validateSchema(cfg); err != nil {
+
+	// Structural validation against the schema file, applied to the raw file so
+	// unknown keys are caught too (a round-trip through Config would drop them).
+	schema := config.FindSchema(schemaPath)
+	if schema == "" {
+		fmt.Fprintf(os.Stderr, "error: no schema file found (looked for %s); pass --schema\n",
+			strings.Join(config.SchemaPaths, ", "))
+		os.Exit(1)
+	}
+	if err := config.ValidateAgainstSchema(schema, path); err != nil {
 		fmt.Fprintf(os.Stderr, "schema validation error: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("valid: config file passes schema validation (%d backend(s))\n", len(cfg.Backends))
+	fmt.Printf("valid: config file passes %s (%d backend(s))\n",
+		filepath.Base(schema), len(cfg.Backends))
 }
 
+// validateSchema validates an in-memory config against the schema file.
+// It returns nil when no schema file can be found, so a build or test that runs
+// outside the repository is not blocked by a missing schema.
 func validateSchema(cfg config.Config) error {
-	if cfg.MainPort != 0 && (cfg.MainPort < 1 || cfg.MainPort > 65535) {
-		return fmt.Errorf("port must be 1-65535")
+	schema := config.FindSchema("")
+	if schema == "" {
+		return nil
 	}
-	if cfg.ShutdownTimeoutSec < 1 {
-		cfg.ShutdownTimeoutSec = 15
+	b, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
 	}
-	return nil
+	tmp, err := os.CreateTemp("", "haribon-schema-*.yml")
+	if err != nil {
+		return fmt.Errorf("temp config: %w", err)
+	}
+	defer func() {
+		_ = os.Remove(tmp.Name())
+	}()
+	if _, err := tmp.Write(b); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write temp config: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp config: %w", err)
+	}
+	return config.ValidateAgainstSchema(schema, tmp.Name())
 }
 
 // ==========================
@@ -512,7 +551,7 @@ func versionCommand() {
 // ==========================
 
 func printUsage() {
-	fmt.Fprintf(os.Stderr, `haribon — lightweight Layer 7 load balancer
+	fmt.Fprintf(os.Stderr, `haribon — HTTP load balancer
 
 Usage:
   haribon <command> [flags]
@@ -526,6 +565,10 @@ Commands:
 Flags (start):
   --config string     Config file path (default: $HARIBON_CONFIG or ./haribon-config.yml)
   --watch_config int  Poll config file every N seconds for changes
+
+Reloading:
+  Send SIGHUP to reload the config on Unix. Windows never delivers SIGHUP,
+  so use --watch_config there.
 
 Examples:
   haribon start --config haribon-config.yml
@@ -681,30 +724,59 @@ func loadBalancer(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "All backend servers failed", http.StatusServiceUnavailable)
 }
 
-// setupLogging wires log exporters based on config.
+// setupLogging wires the log destinations named in cfg.Exporters.
+//
+// The previous implementation built a local []Exporter that was discarded on
+// return, so logWriter stayed os.Stdout and the configured log file was created
+// but never written. This assigns logWriter and the process-wide logSinks.
 func setupLogging(cfg config.Config) {
-	var exporters []logging.Exporter
+	logFormat = cfg.LogFormat
+	if logFormat == "" {
+		logFormat = "json"
+	}
+	logWriter = os.Stdout
 
-	// Always include stdout as the default fallback
-	exporters = append(exporters, &logging.StdoutExporter{})
+	exporters := []logging.Exporter{}
 
-	// Add additional exporters based on config
-	if cfg.Logging {
-		if cfg.LogPath == "" {
-			cfg.LogPath = "./haribon.log"
+	// stdout is always available; it is the fallback when a configured sink fails.
+	if cfg.EnabledExporter("stdout") || len(cfg.Exporters) == 0 {
+		logWriter = os.Stdout
+	}
+
+	if cfg.EnabledExporter("file") || cfg.Logging {
+		path := cfg.LogPath
+		if path == "" {
+			path = "./haribon.log"
 		}
-		if err := os.MkdirAll(filepath.Dir(cfg.LogPath), 0755); err != nil {
-			log.Printf("log dir create warning: %v", err)
+		if dir := filepath.Dir(path); dir != "" && dir != "." {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				log.Printf("log dir create warning: %v", err)
+			}
 		}
-		f, err := os.OpenFile(cfg.LogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
-			log.Printf("log file error (fallback to stdout only): %v", err)
+			log.Printf("log file error (stdout only): %v", err)
 		} else {
-			exporters = append(exporters, &logging.FileExporter{File: f})
+			exporters = append(exporters, &logging.FileExporter{File: f, Format: logFormat})
+			log.Printf("logging to file: %s", path)
 		}
-		// Note: loki, fluentbit, elasticsearch exporters are
-		// best-effort and currently no-ops; they can be enabled
-		// when full implementations are added.
+	}
+
+	if cfg.EnabledExporter("loki") {
+		exporters = append(exporters, logging.NewLokiExporter(cfg.Loki.URL, cfg.Loki.Labels))
+		log.Printf("logging to loki: %s", cfg.Loki.URL)
+	}
+	if cfg.EnabledExporter("elasticsearch") {
+		exporters = append(exporters, logging.NewElasticsearchExporter(cfg.Elasticsearch.URL, cfg.Elasticsearch.Index))
+		log.Printf("logging to elasticsearch: %s (index %s)", cfg.Elasticsearch.URL, cfg.Elasticsearch.Index)
+	}
+	if cfg.EnabledExporter("fluentbit") {
+		exporters = append(exporters, logging.NewFluentbitExporter(cfg.Fluentbit.Addr))
+		log.Printf("logging to fluentbit: %s", cfg.Fluentbit.Addr)
+	}
+
+	if len(exporters) > 0 {
+		logSinks = logging.NewMulti(exporters...)
 	}
 }
 
