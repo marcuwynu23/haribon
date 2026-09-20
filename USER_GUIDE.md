@@ -13,6 +13,70 @@ Haribon is a small HTTP load balancer written in Go, for running in production. 
 - **Structured logs** in JSON or plain text, sent to stdout, a file, Loki, Elasticsearch, or Fluent Bit
 - **Config reload, backend discovery, and cluster-shared health** without a restart
 
+## Table of Contents
+
+- [Installation](#installation)
+  - [From Source](#from-source)
+  - [Docker](#docker)
+  - [Binary Releases](#binary-releases)
+- [Quick Start](#quick-start)
+  - [1. Basic Configuration (`haribon-config.yml`)](#1-basic-configuration-haribon-configyml)
+  - [2. Start the Load Balancer](#2-start-the-load-balancer)
+  - [3. Validate Configuration](#3-validate-configuration)
+- [Balancer Strategies](#balancer-strategies)
+  - [Configuration Example: Weighted Strategy](#configuration-example-weighted-strategy)
+  - [Configuration Example: Least Connections](#configuration-example-least-connections)
+  - [Configuration Example: Random](#configuration-example-random)
+  - [Configuration Example: IP Hash](#configuration-example-ip-hash)
+- [Health Checks](#health-checks)
+- [Circuit Breaker](#circuit-breaker)
+- [Retry Policy](#retry-policy)
+- [Hot Reload (Zero-Downtime Config Changes)](#hot-reload-zero-downtime-config-changes)
+  - [Trigger Mechanisms](#trigger-mechanisms)
+  - [Behavior](#behavior)
+  - [Atomic Snapshot](#atomic-snapshot)
+  - [Log Output](#log-output)
+- [Backend Auto-Discovery](#backend-auto-discovery)
+  - [Discovery Providers](#discovery-providers)
+    - [Static (default)](#static-default)
+    - [DNS](#dns)
+    - [File](#file)
+  - [What Happens on a Change](#what-happens-on-a-change)
+  - [Health Flow](#health-flow)
+  - [Full Config Example with Discovery](#full-config-example-with-discovery)
+- [Clustering & High Availability](#clustering--high-availability)
+  - [Architecture](#architecture)
+  - [Configuration](#configuration)
+  - [Behavior](#behavior)
+  - [Config drift](#config-drift)
+  - [What clustering does not do](#what-clustering-does-not-do)
+  - [High Availability: Failover & Redundancy](#high-availability-failover--redundancy)
+    - [How backend-server failover works](#how-backend-server-failover-works)
+    - [How Haribon-replica redundancy works](#how-haribon-replica-redundancy-works)
+    - [Fronting patterns for true single-IP HA](#fronting-patterns-for-true-single-ip-ha)
+  - [Deployment Examples](#deployment-examples)
+    - [Docker Compose (Local Cluster)](#docker-compose-local-cluster)
+    - [Kubernetes](#kubernetes)
+  - [Full Cluster Config Example](#full-cluster-config-example)
+- [CLI Commands](#cli-commands)
+  - [`haribon start`](#haribon-start)
+  - [`haribon check`](#haribon-check)
+  - [`haribon validate`](#haribon-validate)
+  - [`haribon version`](#haribon-version)
+  - [Usage Examples](#usage-examples)
+  - [SIGHUP Reload in Scripts](#sighup-reload-in-scripts)
+- [Monitoring](#monitoring)
+  - [Prometheus Metrics](#prometheus-metrics)
+  - [Structured Logging](#structured-logging)
+  - [Log Destinations](#log-destinations)
+- [Docker Deployment](#docker-deployment)
+  - [Basic Run](#basic-run)
+  - [With Environment Overrides](#with-environment-overrides)
+  - [Kubernetes](#kubernetes-1)
+  - [Resource Limits](#resource-limits)
+- [Production Checklist](#production-checklist)
+- [License](#license)
+
 ## Installation
 
 ### From Source
@@ -383,6 +447,76 @@ something that does, or point DNS at all of them.
 Nodes running different Haribon versions may not understand each other's
 messages; roll out replicas together.
 
+Scope summary — what is HA inside Haribon vs. what belongs in front of it:
+
+| Capability | Provided by Haribon cluster | Who provides it otherwise |
+|---|---|---|
+| Consistent backend-health view across replicas (so one replica finding a dead server stops routing from *all* replicas) | ✅ | — |
+| Backend-server failover + redundancy (skip unhealthy, try next one) | ✅ | — |
+| Per-backend circuit breaker (stop hammering a server that is timing out) | ✅ | — |
+| Active-active Haribon replicas (survive N-1 replica crashes) | ✅ (stateless design) | K8s Service / cloud LB / DNS RR distributes traffic |
+| **VIP / floating IP takeover** (e.g. keepalived VRRP, one shared IP that moves) | ❌ | keepalived / corosync / pacemaker |
+| **Leader election** (hot-standby → active promotion) | ❌ | No leader; Haribon uses the active-active pattern above |
+| **Traffic balancing across Haribon replicas** | ❌ | K8s Service, cloud ALB/NLB, MetalLB, nginx, haproxy |
+| **Configuration replication** between replicas | ❌ (drift is *detected* via `haribon_config_hash_mismatch_total` but not auto-repaired) | ConfigMap / Ansible / your deployment tooling |
+
+### High Availability: Failover & Redundancy
+
+Haribon's HA story is a deliberate split of responsibilities: the cluster layer
+keeps routing decisions *consistent* across every replica; the layer in front
+of Haribon keeps traffic reaching *at least one alive replica* even if some
+machines fail. This is the same pattern used by Envoy, HAProxy, and nginx in
+production — no L7 proxy bakes its own VRRP.
+
+#### How backend-server failover works
+
+Before any request reaches a backend, three gates must all say "send":
+
+1. **Local health checks** (`backendHealth`) — what *this* replica's probe scheduler measured last.
+2. **Cluster peer findings** (gossip) — what *every other* replica measured last, with stale entries dropped after 3× `gossip_interval_sec` (minimum 15s).
+3. **Per-backend circuit breaker** — tripped when a backend exceeds `failure_threshold` consecutive request-timeout/5xx responses.
+
+If any gate says "no", the balancer skips that backend and picks the next one
+(`round_robin`, `weighted_round_robin`, `least_connections`, `random` all honor
+the same three gates). Only when every backend fails every gate does the proxy
+return a 503.
+
+Why three gates matters:
+
+- A **network partition on one replica** (it cannot reach `backend-2`, peers can) → local gate blocks, peer gate says healthy → *conflict* is resolved safe-side: skip `backend-2` from that replica until its probes recover, preventing a flurry of one-replica timeouts.
+- A **backend-wide outage** → local + peer gates both agree "unhealthy" + breakers all trip independently → 503 fast rather than queueing.
+- A **rolling-restart of Haribon replicas** → findings from the replica being shut down expire within the stale window, so its last "down" verdict does not permanently suppress a backend that the surviving replicas now probe as healthy.
+
+#### How Haribon-replica redundancy works
+
+Deploy ≥2 identical Haribon replicas with clustering enabled. Place a traffic
+distributor in front (see options below) and configure its health check to hit
+Haribon's `/readyz` endpoint. `/readyz` mirrors the exact three-gate logic the
+proxy uses, so a replica that cannot reach any backend (all three gates closed)
+is removed from the fronting pool automatically and stops receiving new
+connections — while the remaining replicas keep serving.
+
+Result: N-1 replica redundancy. One replica can panic, lose its disk, or be
+killed mid-rollout and the other survivors keep accepting traffic with the
+same backend-health view.
+
+#### Fronting patterns for true single-IP HA
+
+If you need "the site stays reachable at one IP when any single machine dies",
+pair the clustered Haribons with one of:
+
+- **Kubernetes (recommended for k8s-native deployments):** Deployment ≥2 replicas, `replicas: 3`, anti-affinity so pods land on different nodes, Service (LoadBalancer / ClusterIP), `PodDisruptionBudget` with `minAvailable: 2`. The sample `samples/k8s/manifests.yml` sets all four up. Health check the Service backends with `GET /readyz`.
+- **Bare-metal / VMs — keepalived VIP:** ≥2 Haribon instances on two hosts, `keepalived` on each host announcing a shared VRRP VIP (e.g. `10.0.0.100`) only on the currently MASTER host, MASTER demoted on `/readyz` failure. Haribon gossip runs on the host IPs (not the VIP) on port 7946/UDP. Clients connect to the VIP.
+- **Bare-metal / VMs — nginx/haproxy in front:** One L4/L7 proxy (your pick) with `upstream` servers pointing at each Haribon's `host:port`. Mark each upstream as `down` on `/readyz` != 200. Run two of these fronting proxies with `keepalived`/`ucarp` if you need one IP on top.
+- **Cloud:** ≥2 Haribon instances (EC2/GCE/VMSS on different AZs) behind an ALB/NLB. Target-group health check = `GET /readyz` with threshold ≥2. Cross-AZ deployment gives you one LB endpoint tolerant of a single AZ or a single Haribon failing.
+
+In every case above, Haribon's gossip layer handles the *inner* consistency
+(which backends are alive); the fronting layer handles the *outer* reachability
+(which Haribon replica gets the next SYN). Do not skip the fronting layer and
+expect clustering to do its job — it is not designed to. See also the
+[clustering.md](docs/clustering.md) design notes for trade-offs of the gossip
+protocol itself.
+
 ### Deployment Examples
 
 #### Docker Compose (Local Cluster)
@@ -709,12 +843,16 @@ Haribon is lightweight with minimal resource requirements:
 - [ ] Configure retry policy for methods that are safe to repeat
 - [ ] Set up log rotation, or send logs to Loki, Elasticsearch, or Fluent Bit with `exporters`
 - [ ] Expose `/metrics` for Prometheus scraping
-- [ ] Set up `/healthz` and `/readyz` probes for K8s
+- [ ] Set up `/healthz` and `/readyz` probes for K8s or the fronting LB
+- [ ] Point your fronting load balancer's health check at `/readyz` (NOT `/healthz`) — `/readyz` honors cluster gossip + breakers and correctly drops replicas that cannot route anywhere
 - [ ] Terminate TLS in front of Haribon — it does not do TLS itself
 - [ ] Set appropriate resource limits in Docker/K8s
-- [ ] Test failover scenarios (kill backends, verify 503)
-- [ ] If running several replicas, enable `cluster` and give each a distinct `node_id`
+- [ ] Test failover scenarios (kill backends individually, verify balancer skips; kill *all* backends, verify 503)
+- [ ] If running several replicas, enable `cluster` and give each a distinct `node_id` (use `${HOSTNAME}` or the pod name)
+- [ ] For true single-IP HA: deploy a fronting layer (K8s Service, cloud LB, keepalived VIP, nginx upstream pool) in front of ≥2 Haribon replicas — clustering alone does not do IP takeover or traffic distribution across replicas
+- [ ] Ensure gossip port 7946/UDP is open between *all* Haribon replicas — findings do not relay two hops, so the peer mesh must be complete
 - [ ] Watch `haribon_config_hash_mismatch_total` during rollouts to catch replicas left on an old config
+- [ ] Watch `haribon_cluster_peers` and alert if it drops below `(replicas - 1)` for longer than the stale-expiry window
 
 ## License
 
