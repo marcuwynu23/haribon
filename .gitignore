@@ -8,3 +8,4 @@ logs/
 tmp/
 *coverage**
 coverage.out
+*cov**
