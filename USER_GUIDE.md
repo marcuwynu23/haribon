@@ -291,6 +291,98 @@ health:
   timeout_sec: 2
 ```
 
+## Clustering & High Availability
+
+Haribon supports multi-replica clustering with gossip-based health sharing, enabling zero-downtime deployments and automatic failover.
+
+### Architecture
+
+Each Haribon instance runs as a node in a gossip cluster:
+- Nodes exchange backend health state over **UDP 7946**
+- **Last-writer-wins** conflict resolution using monotonic terms
+- **Partition-tolerant**: each node degrades gracefully using local health state during network splits
+- Minimum recommended: **3 nodes** for production
+
+### Configuration
+
+```yaml
+cluster:
+  enabled: true
+  node_id: "${HOSTNAME}"          # Unique node identifier
+  peers:
+    - "haribon-0:7946"            # Initial peer list
+    - "haribon-1:7946"
+    - "haribon-2:7946"
+  gossip_interval_sec: 5           # Gossip broadcast interval
+  gossip_addr: "0.0.0.0:7946"     # Gossip listen address
+```
+
+### Behavior
+
+- **Startup**: Node joins the cluster via the initial peer list
+- **Health sharing**: When a node marks a backend unhealthy, the state propagates to all peers within seconds
+- **Conflict resolution**: If two nodes disagree on backend health, the higher term wins
+- **Graceful degradation**: If gossip is partitioned, each node continues routing based on its last known health state
+- **No single point of failure**: All nodes are equal; no leader election required
+
+### Deployment Examples
+
+#### Docker Compose (Local Cluster)
+
+```bash
+cd docker-compose
+docker-compose -f docker-compose.yml up -d
+```
+
+This deploys:
+- **3 Haribon replicas** with gossip clustering (ports 4444, 7946)
+- **3 backend servers** on ports 8081–8083
+- **nginx load balancer** in front of all replicas (port 4444)
+
+```bash
+# Check cluster status
+docker-compose logs haribon-0 | grep gossip
+docker-compose exec haribon-0 curl -s http://localhost:4444/readyz
+
+# Test failover: kill one replica
+docker-compose -f docker-compose.yml stop haribon-0
+# Traffic continues flowing through remaining replicas
+```
+
+#### Kubernetes
+
+See `samples/k8s/manifests.yml` for a complete deployment:
+
+```bash
+kubectl apply -f samples/k8s/manifests.yml
+kubectl scale deploy/haribon --replicas=5
+```
+
+Includes:
+- **Deployment** with 3+ replicas and pod anti-affinity
+- **ClusterIP Service** on port 4444 for client traffic
+- **Headless Service** on port 7946 for gossip peer discovery
+- **HPA** scaling on CPU and request rate
+- **PodDisruptionBudget** ensuring minAvailable=2 during disruptions
+
+### Full Cluster Config Example
+
+```yaml
+host: "0.0.0.0"
+port: 4444
+balancer:
+  strategy: least_connections
+cluster:
+  enabled: true
+  node_id: "${HOSTNAME}"
+  peers: ["haribon-0:7946", "haribon-1:7946", "haribon-2:7946"]
+  gossip_interval_sec: 5
+health:
+  enabled: true
+  interval_sec: 5
+  path: /healthz
+```
+
 ## CLI Commands
 
 ### `haribon start`

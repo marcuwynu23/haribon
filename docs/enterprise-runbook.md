@@ -1,4 +1,4 @@
-# Enterprise Runbook — Haribon
+﻿# Enterprise Runbook â€” Haribon
 
 This document covers Kubernetes, systemd, and CI integration patterns for
 production deployments of Haribon. See `haribon-config.yml` for the canonical
@@ -12,8 +12,8 @@ Haribon exposes two probe endpoints:
 
 | Endpoint | Type | Returns |
 |----------|------|---------|
-| `GET /healthz` | Liveness | `200 {"status":"ok"}` — always |
-| `GET /readyz` | Readiness | `200 {"status":"ok"}` if ≥1 backend healthy; `503 {"status":"unavailable","message":"..."}` otherwise |
+| `GET /healthz` | Liveness | `200 {"status":"ok"}` â€” always |
+| `GET /readyz` | Readiness | `200 {"status":"ok"}` if â‰¥1 backend healthy; `503 {"status":"unavailable","message":"..."}` otherwise |
 
 The probes are registered before the proxy mux so they respond even when
 all backends are down.
@@ -172,13 +172,13 @@ spec:
           averageUtilization: 70
 ```
 
-### Rolling Update — Zero Dropped Requests
+### Rolling Update â€” Zero Dropped Requests
 
 Key settings that prevent dropped requests during `kubectl rollout`:
 
-1. `terminationGracePeriodSeconds: 30` — kubelet waits at least 30 s after SIGTERM before SIGKILL.
-2. `shutdown_timeout_sec: 15` — Haribon drains in-flight requests within 15 s.
-3. `readinessProbe` — kubelet removes the pod from the Service endpoints before sending SIGTERM, so no new traffic arrives during the drain window.
+1. `terminationGracePeriodSeconds: 30` â€” kubelet waits at least 30 s after SIGTERM before SIGKILL.
+2. `shutdown_timeout_sec: 15` â€” Haribon drains in-flight requests within 15 s.
+3. `readinessProbe` â€” kubelet removes the pod from the Service endpoints before sending SIGTERM, so no new traffic arrives during the drain window.
 
 ---
 
@@ -275,7 +275,7 @@ tail -f haribon.log | jq 'select(.level == "error")'
 
 ```bash
 # Start full stack (Haribon + Promtail + Loki + Grafana)
-docker compose -f docker-compose/docker-compose.observability.yml up -d
+docker compose -f samples/docker-compose/docker-compose.observability.yml up -d
 
 # Query logs in Grafana: http://localhost:3000 (admin/admin)
 # LogQL: {job="haribon"} |= "error"
@@ -284,3 +284,4 @@ docker compose -f docker-compose/docker-compose.observability.yml up -d
 ---
 
 *For roadmap items (active health checks, retry, circuit breaker, Prometheus metrics) see [README.md#roadmap](../README.md#roadmap).*
+

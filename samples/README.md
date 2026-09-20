@@ -14,6 +14,8 @@ This folder contains sample configurations for different deployment scenarios.
 | `minimal.yml` | Quick start with just host/port/backends |
 | `ip-hash.yml` | Session affinity configuration |
 | `cluster.yml` | Cluster configuration with gossip health sharing |
+| `cluster.yml` | Cluster configuration with gossip health sharing |
+| `cluster.yml` | Cluster configuration with gossip health sharing |
 | `docker-compose/` | Local cluster deployment with 3 replicas |
 | `k8s/manifests.yml` | Kubernetes deployment (Deployment, Service, HPA, PDB) |
 
@@ -24,7 +26,7 @@ This folder contains sample configurations for different deployment scenarios.
 haribon start --config basic-round-robin.yml
 
 # Cluster deployment (local)
-cd docker-compose && docker-compose up -d
+cd docker-compose && docker-compose -f docker-compose.yml up -d
 
 # Cluster deployment (k8s)
 kubectl apply -f k8s/manifests.yml
@@ -35,8 +37,8 @@ kubectl scale deploy/haribon --replicas=5
 
 ### Local (docker-compose)
 ```bash
-cd samples/docker-compose
-docker-compose up -d
+cd docker-compose
+docker-compose -f docker-compose.yml up -d
 # Access: http://localhost:4444
 # Metrics: http://localhost:4444/metrics
 
@@ -45,7 +47,7 @@ docker-compose logs haribon-0 | grep gossip
 docker-compose exec haribon-0 curl -s http://localhost:4444/readyz
 
 # Chaos test: kill one replica
-docker-compose stop haribon-0
+docker-compose -f docker-compose.yml stop haribon-0
 # Traffic should be unaffected
 ```
 

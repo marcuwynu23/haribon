@@ -6,7 +6,7 @@ tmp_dir = "tmp"
   entrypoint = "./tmp/main.exe"
   args_bin = ["start", "--config", "haribon-config.yml"]
   include_ext = ["go", "yaml", "yml"]
-  exclude_dir = ["tmp", "dist", "releases", "docs", "docker-compose", ".github"]
+  exclude_dir = ["tmp", "dist", "releases", "docs", ".github"]
 
 [log]
   time = false

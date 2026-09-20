@@ -12,7 +12,7 @@
 - Core: round-robin + health-aware routing, `net/http` reverse proxy, structured JSON logs (Loki/Promtail-ready)
 - State: `atomic.Uint64` counter for RR, `sync.RWMutex` health map, `sync.Mutex` log writer, context-cancelled proxying
 - Config: `haribon-config.yml` + env overrides `HARIBON_HOST`, `HARIBON_PORT`, `HARIBON_CONFIG`
-- Artifacts: `make build|dist|release`, `Dockerfile` (multi-stage, distroless-ish `alpine:3.20`, non-root `haribon` user), `docker-compose/` observability stack (Haribon → Promtail → Loki → Grafana)
+- Artifacts: `make build|dist|release`, `Dockerfile` (multi-stage, distroless-ish `alpine:3.20`, non-root `haribon` user), `samples/docker-compose/` observability stack (Haribon → Promtail → Loki → Grafana)
 - Tests: `go test ./...` / `make test` — currently `cli/main_test.go`
 
 Do not introduce frameworks, ORMs, or service meshes without an approved GH issue + design note.
@@ -71,7 +71,7 @@ Every change must satisfy all lenses. If trade-offs arise, document them in PR b
 - Image: multi-stage, `CGO_ENABLED=0`, `-ldflags="-s -w"`, non-root `haribon`, `EXPOSE 4444`, `ENTRYPOINT` honoring `${HARIBON_CONFIG}`.
 - Never run as root, never `chmod 777`, never bake secrets. `COPY haribon-config.yml /etc/haribon/` + `chown haribon:haribon`.
 - K8s-ready: liveness/readiness must be satisfiable (future `/healthz`). Log to stdout so Promtail/Loki works without sidecars. Support `HARIBON_HOST=0.0.0.0`.
-- Compose: keep `docker-compose/docker-compose.yml` (backends) and `docker-compose.observability.yml` (Loki/Promtail/Grafana) in sync with `README.md` ports: `4444, 4441-4443, 3100, 3000`.
+- Compose: keep `samples/docker-compose/docker-compose-backends.yml` (backends) and `samples/docker-compose/docker-compose.observability.yml` (Loki/Promtail/Grafana) in sync with `README.md` ports: `4444, 4441-4443, 3100, 3000`.
 
 ### 1.6 System Designer
 - Apply: separation of concerns, fail-fast + graceful degradation (skip unhealthy → `503` only if none healthy), least surprise, idempotency, backpressure via timeouts.
@@ -102,7 +102,7 @@ Every change must satisfy all lenses. If trade-offs arise, document them in PR b
 
 ### 2.3 Tool Standards
 - Keep `make dev|start|build|dist|release|clean|test` green. If you add a make target, add `.PHONY` + help text.
-- Dockerfile + compose must still build: `docker build -t haribon:dev .` and `docker compose -f docker-compose/docker-compose.observability.yml config`.
+- Dockerfile + compose must still build: `docker build -t haribon:dev .` and `docker compose -f samples/docker-compose/docker-compose.observability.yml config`.
 
 ### 2.4 Security
 - Follow `SECURITY_POLICY.md`. Validate `url` scheme (`http/https` only), reject `file://`, SSRF-guard backend list in future.
@@ -228,7 +228,7 @@ make test ; make build
 # containers
 docker build -t haribon:dev .
 docker run --rm -p 4444:4444 haribon:dev
-docker compose -f docker-compose/docker-compose.observability.yml up -d
+docker compose -f samples/docker-compose/docker-compose.observability.yml up -d
 ```
 
 ---

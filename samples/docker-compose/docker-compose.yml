@@ -2,9 +2,9 @@
 # Run 3 Haribon replicas behind a load balancer for HA testing
 #
 # Usage:
-#   cd samples/docker-compose && docker-compose up -d
-#   docker-compose ps
-#   docker-compose down
+#   cd samples/docker-compose && docker-compose -f docker-compose.yml up -d
+#   docker-compose -f docker-compose.yml ps
+#   docker-compose -f docker-compose.yml down
 #
 # Topology:
 #   client → haribon-lb:4444 → [haribon-0, haribon-1, haribon-2] → backends
@@ -13,7 +13,6 @@
 version: "3.8"
 
 services:
-  # Backend servers (for testing)
   backend1:
     image: node:20-alpine
     command: sh -c "npm install -g http-server && http-server /usr/share/nginx/html -p 8080"
@@ -38,7 +37,6 @@ services:
     networks:
       - haribon-net
 
-  # Haribon replicas with gossip clustering
   haribon-0:
     image: ghcr.io/marcuwynu23/haribon:latest
     command: start --config /etc/haribon/haribon-cluster.yml
@@ -99,7 +97,6 @@ services:
     deploy:
       replicas: 1
 
-  # Load balancer in front of Haribon replicas
   haribon-lb:
     image: nginx:alpine
     ports:
@@ -117,14 +114,10 @@ networks:
   haribon-net:
     driver: bridge
 
-# Health check command:
-#   docker-compose exec haribon-0 curl -s http://localhost:4444/readyz
-#   docker-compose exec haribon-0 curl -s http://localhost:4444/metrics | grep cluster
+# Health check:
+#   docker-compose -f docker-compose.yml exec haribon-0 curl -s http://localhost:4444/readyz
+#   docker-compose -f docker-compose.yml exec haribon-0 curl -s http://localhost:4444/metrics | grep cluster
 #
 # Chaos test:
-#   docker-compose stop haribon-0
+#   docker-compose -f docker-compose.yml stop haribon-0
 #   Verify traffic still flows through remaining replicas
-#
-# To test gossip:
-#   docker-compose logs haribon-0 | grep gossip
-#   docker-compose logs haribon-1 | grep gossip

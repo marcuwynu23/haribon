@@ -1,4 +1,4 @@
-<div align="center">
+﻿<div align="center">
   <h1> Haribon </h1>
 </div>
 
@@ -9,32 +9,32 @@
   <img src="https://img.shields.io/github/license/marcuwynu23/haribon.svg" alt="License Badge"/>
 </p>
 
-Haribon is a lightweight Go-based layer 7 (application‑layer) load balancer designed for simplicity, observability, and production readiness.
-It provides **5 pluggable balancing strategies** — round-robin, weighted round-robin, least-connections, random and ip-hash — with health-aware routing, active health checks, per-backend circuit breaker, retry, Prometheus metrics, graceful shutdown and structured JSON logging (Loki/Promtail ready).
+Haribon is a lightweight Go-based layerâ€¯7 (applicationâ€‘layer) load balancer designed for simplicity, observability, and production readiness.
+It provides **5 pluggable balancing strategies** â€” round-robin, weighted round-robin, least-connections, random and ip-hash â€” with health-aware routing, active health checks, per-backend circuit breaker, retry, Prometheus metrics, graceful shutdown and structured JSON logging (Loki/Promtail ready).
 
-> **Vision:** serve multiple applications/hosts from a single Haribon binary with high-scale L7 HTTP performance — see [ROADMAP.md](ROADMAP.md).
+> **Vision:** serve multiple applications/hosts from a single Haribon binary with high-scale L7 HTTP performance â€” see [ROADMAP.md](ROADMAP.md).
 
 ---
 
 ## Features
 
 - Layer 7 (HTTP) load balancing with **5 pluggable strategies**: round-robin, weighted round-robin, least-connections, random, ip-hash (configurable via `balancer.strategy` without code changes)
-- Health-aware routing — skips unhealthy/open-breaker backends, `503` only if none healthy
+- Health-aware routing â€” skips unhealthy/open-breaker backends, `503` only if none healthy
 - Active health-check scheduler (background per-backend probes with healthy/unhealthy thresholds)
 - Per-backend circuit breaker (closed / open / half-open FSM)
-- Retry policy on idempotent methods (GET, HEAD, PUT, DELETE, OPTIONS) — `X-Haribon-Retries` header
-- `GET /healthz` liveness — always 200, `GET /readyz` readiness — 200 if ≥1 healthy backend else 503
-- `GET /metrics` — Prometheus-format counters/gauges (requests, retries, breaker state, backend health, active conns, duration)
-- Structured JSON logging (Loki-ready) — fields `time, method, path, backend, status, duration_ms, level` additive-only; file/stdout with auto `MkdirAll` and fallback
+- Retry policy on idempotent methods (GET, HEAD, PUT, DELETE, OPTIONS) â€” `X-Haribon-Retries` header
+- `GET /healthz` liveness â€” always 200, `GET /readyz` readiness â€” 200 if â‰¥1 healthy backend else 503
+- `GET /metrics` â€” Prometheus-format counters/gauges (requests, retries, breaker state, backend health, active conns, duration)
+- Structured JSON logging (Loki-ready) â€” fields `time, method, path, backend, status, duration_ms, level` additive-only; file/stdout with auto `MkdirAll` and fallback
 - Pluggable log exporters (`stdout`, `file`, `loki`, `fluentbit`, `elasticsearch`) with `log_format: json|text`
 - Safe HTTP reverse proxying with hop-by-hop stripping, `X-Forwarded-For/Proto` preservation, correct `Content-Length` handling for large HTML/frontend assets
 - Environment variable overrides (`HARIBON_HOST`, `HARIBON_PORT`, `HARIBON_CONFIG`) + `haribon check --config` validation for CI
 - Graceful shutdown on `SIGINT/SIGTERM` with configurable `shutdown_timeout_sec`, `haribon version` via `-ldflags`
-- **Zero-downtime config hot reload** via `SIGHUP` (`kill -HUP`) or `--watch_config` file polling — backends, weights, TLS certs, log level swap atomically without restart
-- **Backend auto-discovery** (DNS, file) for dynamic environments — `discovery.provider: dns|file|static`
-- `haribon validate --config` — JSON schema validation for editor autocomplete and CI
-- **Clustering & HA** — gossip-based health sharing across N replicas, DNS/file peer discovery, k8s Deployment + HPA + PDB support
-- **Cluster metrics** — `haribon_cluster_peers`, `haribon_cluster_term`, `haribon_config_hash_mismatch_total`
+- **Zero-downtime config hot reload** via `SIGHUP` (`kill -HUP`) or `--watch_config` file polling â€” backends, weights, TLS certs, log level swap atomically without restart
+- **Backend auto-discovery** (DNS, file) for dynamic environments â€” `discovery.provider: dns|file|static`
+- `haribon validate --config` â€” JSON schema validation for editor autocomplete and CI
+- **Clustering & HA** â€” gossip-based health sharing across N replicas, DNS/file peer discovery, k8s Deployment + HPA + PDB support
+- **Cluster metrics** â€” `haribon_cluster_peers`, `haribon_cluster_term`, `haribon_config_hash_mismatch_total`
 
 ---
 
@@ -88,9 +88,9 @@ cluster:
 > Today Haribon serves **one** frontend (one `host:port`) and **one** backend pool per process.
 > Serving multiple applications/hosts from a single binary (virtual hosts, multi-frontend listeners)
 > with high-scale L7 performance is tracked in
-> [#10](https://github.com/marcuwynu23/haribon/issues/10) — the flat config above will keep working unchanged.
+> [#10](https://github.com/marcuwynu23/haribon/issues/10) â€” the flat config above will keep working unchanged.
 
-> **Hot reload**: Edit the config, then `kill -HUP <pid>` or use `--watch_config N` to poll every N seconds. Backends, weights, TLS certs, and log level swap atomically — in-flight requests complete on the previous snapshot. Failed reloads keep the old config. See [docs/hot-reload.md](docs/hot-reload.md).
+> **Hot reload**: Edit the config, then `kill -HUP <pid>` or use `--watch_config N` to poll every N seconds. Backends, weights, TLS certs, and log level swap atomically â€” in-flight requests complete on the previous snapshot. Failed reloads keep the old config. See [docs/hot-reload.md](docs/hot-reload.md).
 
 ---
 
@@ -127,7 +127,7 @@ cluster:
 ### Config validation (CI)
 
 ```bash
-# In your CI pipeline — fails build on bad config before deployment
+# In your CI pipeline â€” fails build on bad config before deployment
 haribon check --config haribon-config.yml
 haribon validate --config haribon-config.yml
 # ok: 3 backend(s), probes /healthz /readyz enabled
@@ -152,7 +152,7 @@ haribon start --config haribon-config.yml --watch_config 30
 ```
 
 - In-flight requests complete on the previous config snapshot
-- Failed reloads log `level:error` and keep the old config — never crash
+- Failed reloads log `level:error` and keep the old config â€” never crash
 - Backend list, weights, TLS certs, and log level swap atomically
 - Listener address/port changes require a restart
 
@@ -183,12 +183,12 @@ All strategies are health-aware (skip unhealthy/open-breaker) and fall back to `
 | Strategy | Config `balancer.strategy` | Use when |
 |---|---|---|
 | round-robin | `round_robin` (default) | 3 identical backends, fair rotation |
-| weighted round-robin | `weighted_round_robin` | heterogeneous capacity — `backends[].weight` (slots) |
+| weighted round-robin | `weighted_round_robin` | heterogeneous capacity â€” `backends[].weight` (slots) |
 | least-connections | `least_connections` | uneven/long-lived requests, `ActiveConns()` tracked |
 | random | `random` | stateless uniform fan-out, no stickiness |
 | ip-hash | `ip_hash` | session affinity (best-effort, consistent while pool unchanged) |
 
-Unknown `strategy` → fail-fast at `haribon start`/`check` (`ErrUnknownStrategy`); invalid `weight <1` → validation error.
+Unknown `strategy` â†’ fail-fast at `haribon start`/`check` (`ErrUnknownStrategy`); invalid `weight <1` â†’ validation error.
 
 ---
 
@@ -261,24 +261,24 @@ curl http://localhost:4444
 curl http://localhost:4444/index.html
 ```
 
-Supports both frontend and backend web servers — requests are distributed using the configured strategy (default `round_robin`) with health filtering.
+Supports both frontend and backend web servers â€” requests are distributed using the configured strategy (default `round_robin`) with health filtering.
 
 ---
 
 ## Observability Stack (Loki + Promtail + Grafana)
 
-Haribon includes a full observability stack via `docker-compose.observability.yml`.
+Haribon includes a full observability stack via `samples/docker-compose/docker-compose.observability.yml`.
 
 ### Architecture
 
 ```
-Haribon → JSON logs → Promtail → Loki → Grafana
+Haribon â†’ JSON logs â†’ Promtail â†’ Loki â†’ Grafana
 ```
 
 ### Start stack
 
 ```bash
-docker compose -f docker-compose.observability.yml up -d
+docker compose -f samples/docker-compose/docker-compose.observability.yml up -d
 ```
 
 ### Services
@@ -348,3 +348,4 @@ go test ./...
 ## License
 
 Apache 2.0 License
+

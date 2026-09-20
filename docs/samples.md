@@ -74,8 +74,8 @@ cluster:
 Local cluster deployment with 3 Haribon replicas and nginx load balancer.
 
 ```bash
-cd samples/docker-compose
-docker-compose up -d
+cd docker-compose
+docker-compose -f docker-compose.yml up -d
 ```
 
 Access: `http://localhost:4444`
@@ -86,7 +86,7 @@ Metrics: `http://localhost:4444/metrics`
 docker-compose logs haribon-0 | grep gossip
 
 # Chaos test: kill one replica
-docker-compose stop haribon-0
+docker-compose -f docker-compose.yml stop haribon-0
 # Traffic still flows through remaining replicas
 ```
 
