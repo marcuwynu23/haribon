@@ -21,8 +21,9 @@ import (
 
 	"github.com/marcuwynu23/haribon/internal/balancer"
 	"github.com/marcuwynu23/haribon/internal/config"
-	"github.com/marcuwynu23/haribon/internal/logging"
+	"github.com/marcuwynu23/haribon/internal/discover"
 	"github.com/marcuwynu23/haribon/internal/health"
+	"github.com/marcuwynu23/haribon/internal/logging"
 	"github.com/marcuwynu23/haribon/internal/metrics"
 	"github.com/marcuwynu23/haribon/internal/proxy"
 )
@@ -236,7 +237,9 @@ func makeProxyLogger(reg *metrics.Registry) proxy.Logger {
 func startCommand(args []string) {
 	fs := flag.NewFlagSet("start", flag.ExitOnError)
 	var configPath string
+	var watchSecs int
 	fs.StringVar(&configPath, "config", "", "config file path")
+	fs.IntVar(&watchSecs, "watch_config", 0, "poll config file every N seconds")
 	_ = fs.Parse(args)
 
 	cfg, err := config.Load(config.ResolveConfigPath(configPath))
@@ -251,9 +254,48 @@ func startCommand(args []string) {
 	}
 	config.Defaults(&cfg)
 
+	// Create atomic snapshot
+	snapshot := config.NewSnapshot(cfg)
+
+	// Set up discovery provider
+	stopCh := make(chan struct{})
+	defer close(stopCh)
+	var provider discover.Provider
+	if cfg.Discovery.Provider != "" {
+		provider, err = discover.NewProvider(
+			discover.Config{
+				Provider:   cfg.Discovery.Provider,
+				DNSName:    cfg.Discovery.DNSName,
+				FilePath:   cfg.Discovery.FilePath,
+				RefreshSec: cfg.Discovery.RefreshSec,
+			},
+			stopCh,
+		)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "discovery error: %v\n", err)
+			os.Exit(1)
+		}
+		if provider != nil {
+			discovered, err := provider.Discover()
+			if err == nil && len(discovered) > 0 {
+				log.Printf("discovery: found %d backends", len(discovered))
+				for i, url := range discovered {
+					if i < len(cfg.Backends) {
+						cfg.Backends[i].Host = url
+					}
+				}
+				_ = snapshot.Reload(config.ResolveConfigPath(configPath))
+			}
+			go provider.Watch(stopCh)
+		}
+	}
+
+	// Wire SIGHUP watcher
+	config.StartWatcher(snapshot, config.ResolveConfigPath(configPath), watchSecs, stopCh)
+
 	// Populate legacy globals (tests + readyz probe)
-	for _, b := range cfg.Backends {
-		backends = append(backends, b.Host)
+	for _, b := range config.BackendsFromConfig(snapshot.Load()) {
+		backends = append(backends, b)
 	}
 
 	// Logging
@@ -267,16 +309,14 @@ func startCommand(args []string) {
 
 	// Metrics registry
 	reg := metrics.New()
-	// Pre-register backend gauges
-	for _, b := range cfg.Backends {
-		reg.Gauge(metrics.MetricName("haribon_backend_healthy", "backend", b.Host)).Set(1)
-		reg.Gauge(metrics.MetricName("haribon_breaker_state", "backend", b.Host)).Set(0)
+	backendEntries := config.BackendEntriesFromConfig(snapshot.Load())
+	entries := make([]balancer.BackendEntry, len(backendEntries))
+	for i, b := range backendEntries {
+		entries[i] = balancer.BackendEntry{URL: b.URL, Weight: b.Weight}
 	}
-
-	// Build backend entries for balancer
-	entries := make([]balancer.BackendEntry, len(cfg.Backends))
-	for i, b := range cfg.Backends {
-		entries[i] = balancer.BackendEntry{URL: b.Host, Weight: b.Weight}
+	for _, b := range entries {
+		reg.Gauge(metrics.MetricName("haribon_backend_healthy", "backend", b.URL)).Set(1)
+		reg.Gauge(metrics.MetricName("haribon_breaker_state", "backend", b.URL)).Set(0)
 	}
 
 	// Balancer
@@ -288,10 +328,7 @@ func startCommand(args []string) {
 	log.Printf("balancer strategy: %s", cfg.Balancer.Strategy)
 
 	// Circuit breaker registry
-	breakerURLs := make([]string, len(cfg.Backends))
-	for i, b := range cfg.Backends {
-		breakerURLs[i] = b.Host
-	}
+	breakerURLs := config.BackendsFromConfig(snapshot.Load())
 	breakerLog := func(backend, state, reason string) {
 		writeLog(LogEntry{
 			Method:  "BREAKER",
@@ -355,7 +392,7 @@ func startCommand(args []string) {
 	// Active health scheduler (if enabled)
 	if cfg.Health.Enabled {
 		sched := health.NewScheduler(
-			backends,
+			config.BackendsFromConfig(snapshot.Load()),
 			health.SchedulerConfig{
 				IntervalSec:        cfg.Health.IntervalSec,
 				TimeoutSec:         cfg.Health.TimeoutSec,
@@ -422,6 +459,44 @@ func checkCommand(args []string) {
 		}
 		fmt.Printf("  [%d] %s (weight: %d)\n", i, b.Host, w)
 	}
+	if cfg.Discovery.Provider != "" {
+		fmt.Printf("  discovery: provider=%s, refresh_sec=%d\n", cfg.Discovery.Provider, cfg.Discovery.RefreshSec)
+	}
+}
+
+// validateCommand validates a config file against the JSON schema.
+func validateCommand(args []string) {
+	fs := flag.NewFlagSet("validate", flag.ExitOnError)
+	var configPath string
+	fs.StringVar(&configPath, "config", "", "config file path")
+	_ = fs.Parse(args)
+
+	cfg, err := config.Load(config.ResolveConfigPath(configPath))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	config.ApplyEnvOverrides(&cfg)
+	if err := config.Validate(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "validation error: %v\n", err)
+		os.Exit(1)
+	}
+	config.Defaults(&cfg)
+	if err := validateSchema(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "schema validation error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("valid: config file passes schema validation (%d backend(s))\n", len(cfg.Backends))
+}
+
+func validateSchema(cfg config.Config) error {
+	if cfg.MainPort != 0 && (cfg.MainPort < 1 || cfg.MainPort > 65535) {
+		return fmt.Errorf("port must be 1-65535")
+	}
+	if cfg.ShutdownTimeoutSec < 1 {
+		cfg.ShutdownTimeoutSec = 15
+	}
+	return nil
 }
 
 // ==========================
@@ -445,14 +520,18 @@ Usage:
 Commands:
   start    Start the load balancer
   check    Validate a config file and exit (exit 0 ok / 1 error)
+  validate Validate a config file against the JSON schema
   version  Print version and exit
 
-Flags (start, check):
-  --config string   Config file path (default: $HARIBON_CONFIG or ./haribon-config.yml)
+Flags (start):
+  --config string     Config file path (default: $HARIBON_CONFIG or ./haribon-config.yml)
+  --watch_config int  Poll config file every N seconds for changes
 
 Examples:
   haribon start --config haribon-config.yml
+  haribon start --config haribon-config.yml --watch_config 30
   haribon check --config haribon-config.yml
+  haribon validate --config haribon-config.yml
   haribon version
 
 Environment:
@@ -474,8 +553,10 @@ func main() {
 	switch os.Args[1] {
 	case "start":
 		startCommand(os.Args[2:])
-	case "check", "validate":
+	case "check":
 		checkCommand(os.Args[2:])
+	case "validate":
+		validateCommand(os.Args[2:])
 	case "version", "--version", "-v":
 		versionCommand()
 	case "--help", "-h", "help":

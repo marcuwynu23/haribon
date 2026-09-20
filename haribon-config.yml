@@ -26,6 +26,13 @@ breaker:
   failure_threshold: 5
   cooldown_sec: 30
 
+# Backend auto-discovery (optional)
+# discovery:
+#   provider: static  # static | dns | file
+#   dns_name: "api.internal"
+#   file_path: "/etc/haribon/backends.json"
+#   refresh_sec: 30
+
 backends:
 - url: "http://localhost:4441"
   weight: 1

@@ -191,6 +191,106 @@ retry:
 - Retry count included in log entries (`retries` field)
 - Metrics: `haribon_retries_total`
 
+## Hot Reload (Zero-Downtime Config Changes)
+
+Haribon supports zero-downtime configuration reloads without restarting the process.
+
+### Trigger Mechanisms
+
+1. **SIGHUP**: `kill -HUP <pid>` to reload the config file atomically
+2. **File polling**: `--watch_config N` flag to poll the config file every N seconds
+
+```bash
+# Start with SIGHUP support
+haribon start --config haribon-config.yml &
+
+# Edit the config file, then trigger reload
+kill -HUP %1
+
+# Or use file polling (checks every 30 seconds)
+haribon start --config haribon-config.yml --watch_config 30
+```
+
+### Behavior
+
+- **In-flight requests** complete on the previous config snapshot
+- **Backend list, weights, TLS certs, log level** swap atomically
+- **Failed reloads** log `level:error` and keep the old config — never crash
+- **Listener address/port changes** require a restart
+- **All-unhealthy** scenario returns `503 All backend servers failed`
+
+### Atomic Snapshot
+
+The `config.Snapshot` type uses `atomic.Pointer` to swap configs atomically. Old snapshots remain accessible until in-flight requests complete.
+
+```go
+s := config.NewSnapshot(cfg)
+s.Reload(path)  // atomically swaps the config
+s.Load()        // returns the current snapshot
+```
+
+### Log Output
+
+```json
+{"level":"info","msg":"config reloaded","path":"haribon-config.yml"}
+{"level":"error","msg":"config reload error: ..."}  // on failure
+```
+
+## Backend Auto-Discovery
+
+For dynamic environments (k8s, auto-scaling), Haribon can automatically discover backends.
+
+### Discovery Providers
+
+#### Static (default)
+Fixed backend list from `backends:` YAML field. No dynamic updates.
+
+#### DNS
+Polls a DNS name for A records at the configured interval.
+
+```yaml
+discovery:
+  provider: dns
+  dns_name: "api.internal"
+  refresh_sec: 30
+```
+
+#### File
+Watches a JSON file containing an array of backend URLs.
+
+```yaml
+discovery:
+  provider: file
+  file_path: "/etc/haribon/backends.json"
+  refresh_sec: 10
+```
+
+The JSON file must contain: `["http://10.0.0.1:4441", "http://10.0.0.2:4442"]`
+
+### Health Flow
+
+Discovered backends follow the same health check flow as static backends:
+- Unhealthy discovered entries are skipped by the balancer
+- Circuit breakers apply to all backends regardless of source
+- Health scheduler probes all backends in the current snapshot
+
+### Full Config Example with Discovery
+
+```yaml
+host: "0.0.0.0"
+port: 4444
+balancer:
+  strategy: round_robin
+discovery:
+  provider: dns
+  dns_name: "api.internal"
+  refresh_sec: 30
+health:
+  enabled: true
+  interval_sec: 10
+  timeout_sec: 2
+```
+
 ## CLI Commands
 
 ### `haribon start`
@@ -199,6 +299,7 @@ Start the load balancer with configuration:
 
 ```bash
 haribon start --config haribon-config.yml
+haribon start --config haribon-config.yml --watch_config 30
 ```
 
 Environment variables override YAML:
@@ -216,11 +317,14 @@ haribon check --config haribon-config.yml
 # Exit 0 if valid, exit 1 if invalid
 ```
 
-Output shows:
-- Number of backends
-- Selected strategy
-- Whether health checks, readiness, and metrics are enabled
-- Per-backend weights
+### `haribon validate`
+
+Validate configuration against the JSON schema:
+
+```bash
+haribon validate --config haribon-config.yml
+# Output: valid: config file passes schema validation (2 backend(s))
+```
 
 ### `haribon version`
 
@@ -243,9 +347,24 @@ HARIBON_PORT=8080 haribon start --config prod-config.yml
 
 # Validate config
 haribon check --config haribon-config.yml
+haribon validate --config haribon-config.yml
 
 # Check version
 haribon version
+```
+
+### SIGHUP Reload in Scripts
+
+```bash
+#!/bin/bash
+haribon start --config haribon-config.yml &
+PID=$!
+
+# When config changes:
+kill -HUP $PID
+
+# With file polling:
+haribon start --config haribon-config.yml --watch_config 30 &
 ```
 
 ## Monitoring

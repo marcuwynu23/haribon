@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,6 +20,16 @@ func resetState() {
 	atomic.StoreUint64(&currentServer, 0)
 	backendHealth = map[string]bool{}
 	logWriter = os.Stdout
+}
+
+func writeTempYAML(t *testing.T, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yml")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write temp yaml: %v", err)
+	}
+	return path
 }
 
 // ==========================
@@ -407,5 +418,86 @@ func TestHasHealthyBackend_OneHealthy_ReturnsTrue(t *testing.T) {
 	checker := balancerHealthChecker{}
 	if !checker.HasHealthyBackend() {
 		t.Fatal("one healthy backend should return true")
+	}
+}
+
+// ==========================
+// VALIDATE COMMAND
+// ==========================
+
+func TestValidateCommand_ValidConfig(t *testing.T) {
+	yaml := `
+host: "0.0.0.0"
+port: 4444
+backends:
+  - url: "http://localhost:4441"
+discovery:
+  provider: static
+`
+	path := writeTempYAML(t, yaml)
+	// validateCommand is a main package function - test via loadConfig + Validate
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+	config.ApplyEnvOverrides(&cfg)
+	if err := config.Validate(cfg); err != nil {
+		t.Fatalf("validate failed: %v", err)
+	}
+	config.Defaults(&cfg)
+	if err := validateSchema(cfg); err != nil {
+		t.Fatalf("validateSchema failed: %v", err)
+	}
+}
+
+func TestValidateCommand_DiscoveryConfig(t *testing.T) {
+	yaml := `
+host: "0.0.0.0"
+port: 4444
+backends:
+  - url: "http://localhost:4441"
+discovery:
+  provider: dns
+  dns_name: "api.internal"
+  refresh_sec: 30
+`
+	path := writeTempYAML(t, yaml)
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+	config.ApplyEnvOverrides(&cfg)
+	if err := config.Validate(cfg); err != nil {
+		t.Fatalf("validate failed: %v", err)
+	}
+	config.Defaults(&cfg)
+	if cfg.Discovery.Provider != "dns" {
+		t.Fatalf("discovery provider: %s", cfg.Discovery.Provider)
+	}
+}
+
+func TestCheckCommand_WithDiscovery(t *testing.T) {
+	yaml := `
+host: "0.0.0.0"
+port: 4444
+backends:
+  - url: "http://localhost:4441"
+discovery:
+  provider: file
+  file_path: "/etc/haribon/backends.json"
+  refresh_sec: 10
+`
+	path := writeTempYAML(t, yaml)
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+	config.ApplyEnvOverrides(&cfg)
+	if err := config.Validate(cfg); err != nil {
+		t.Fatalf("validate failed: %v", err)
+	}
+	config.Defaults(&cfg)
+	if cfg.Discovery.Provider != "file" {
+		t.Fatalf("discovery provider: %s", cfg.Discovery.Provider)
 	}
 }

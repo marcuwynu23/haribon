@@ -1,4 +1,4 @@
-.PHONY: dev start build dist release clean
+.PHONY: dev start build dist release clean test validate schema
 
 # Safe version fallback (no tags = dev)
 VERSION := $(shell git describe --tags --abbrev=0 2>/dev/null || echo dev)
@@ -50,3 +50,9 @@ clean:
 test:
 	go test ./... -count=1 -coverprofile=coverage.out
 	go tool cover -func coverage.out
+
+validate: build
+	./bin/haribon$(if $(findstring windows,$(shell go env GOOS)),.exe,) validate --config haribon-config.yml
+
+schema:
+	@echo "Schema available at schema/haribon-config.schema.json"

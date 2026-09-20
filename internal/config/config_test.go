@@ -253,6 +253,174 @@ func TestResolveConfigPath_Default(t *testing.T) {
 	}
 }
 
+// ---------- Snapshot ----------
+
+func TestSnapshot_Load(t *testing.T) {
+	cfg := config.Config{
+		MainHost: "0.0.0.0",
+		MainPort: 4444,
+		Backends: []config.Backend{{Host: "http://localhost:4441"}},
+	}
+	s := config.NewSnapshot(cfg)
+	got := s.Load()
+	if got.MainHost != "0.0.0.0" || got.MainPort != 4444 {
+		t.Fatalf("snapshot load failed: %+v", got)
+	}
+}
+
+func TestSnapshot_Reload(t *testing.T) {
+	yaml := `
+host: "0.0.0.0"
+port: 4444
+backends:
+  - url: "http://localhost:4441"
+`
+	path := writeTempYAML(t, yaml)
+	cfg := config.Config{MainHost: "old", MainPort: 9999}
+	s := config.NewSnapshot(cfg)
+
+	if err := s.Reload(path); err != nil {
+		t.Fatalf("reload failed: %v", err)
+	}
+	got := s.Load()
+	if got.MainHost != "0.0.0.0" || got.MainPort != 4444 {
+		t.Fatalf("reload didn't update: %+v", got)
+	}
+}
+
+func TestSnapshot_Reload_Invalid_KeepsOld(t *testing.T) {
+	cfg := config.Config{MainHost: "old", MainPort: 9999, Backends: []config.Backend{{Host: "http://old:4441"}}}
+	s := config.NewSnapshot(cfg)
+
+	// Try to reload with a bad path - should keep old config
+	_ = s.Reload("/no/such/file.yml")
+	got := s.Load()
+	if got.MainHost != "old" {
+		t.Fatalf("invalid reload should keep old config: %+v", got)
+	}
+}
+
+func TestSnapshot_Reload_InvalidConfig_KeepsOld(t *testing.T) {
+	yaml := `host: "bad"
+port: 99999
+backends: []
+`
+	path := writeTempYAML(t, yaml)
+	cfg := config.Config{MainHost: "old", MainPort: 4444, Backends: []config.Backend{{Host: "http://old:4441"}}}
+	s := config.NewSnapshot(cfg)
+
+	// Try to reload with an invalid config - should keep old config
+	_ = s.Reload(path)
+	got := s.Load()
+	if got.MainHost != "old" {
+		t.Fatalf("invalid config reload should keep old: %+v", got)
+	}
+}
+
+func TestSnapshot_Reload_UpdatesBackends(t *testing.T) {
+	yaml := `host: "0.0.0.0"
+port: 4444
+backends:
+  - url: "http://new1:4441"
+  - url: "http://new2:4442"
+`
+	path := writeTempYAML(t, yaml)
+	cfg := config.Config{MainHost: "0.0.0.0", MainPort: 4444, Backends: []config.Backend{{Host: "http://old:4441"}}}
+	s := config.NewSnapshot(cfg)
+
+	_ = s.Reload(path)
+	got := s.Load()
+	if len(got.Backends) != 2 {
+		t.Fatalf("expected 2 backends after reload, got %d", len(got.Backends))
+	}
+	if got.Backends[0].Host != "http://new1:4441" {
+		t.Fatalf("first backend not updated: %s", got.Backends[0].Host)
+	}
+}
+
+// ---------- Config with Discovery ----------
+
+func TestValidate_DiscoveryDNS_Valid(t *testing.T) {
+	cfg := config.Config{
+		MainPort:  4444,
+		Backends:  []config.Backend{{Host: "http://localhost:4441"}},
+		Discovery: config.DiscoveryConfig{Provider: "dns", DNSName: "api.internal", RefreshSec: 30},
+	}
+	if err := config.Validate(cfg); err != nil {
+		t.Fatalf("dns discovery should be valid: %v", err)
+	}
+}
+
+func TestValidate_DiscoveryFile_Valid(t *testing.T) {
+	cfg := config.Config{
+		MainPort:  4444,
+		Backends:  []config.Backend{{Host: "http://localhost:4441"}},
+		Discovery: config.DiscoveryConfig{Provider: "file", FilePath: "/etc/haribon/backends.json", RefreshSec: 10},
+	}
+	if err := config.Validate(cfg); err != nil {
+		t.Fatalf("file discovery should be valid: %v", err)
+	}
+}
+
+func TestValidate_DiscoveryDNS_MissingName(t *testing.T) {
+	cfg := config.Config{
+		MainPort:  4444,
+		Backends:  []config.Backend{{Host: "http://localhost:4441"}},
+		Discovery: config.DiscoveryConfig{Provider: "dns"},
+	}
+	err := config.Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for dns without name")
+	}
+}
+
+func TestValidate_DiscoveryFile_MissingPath(t *testing.T) {
+	cfg := config.Config{
+		MainPort:  4444,
+		Backends:  []config.Backend{{Host: "http://localhost:4441"}},
+		Discovery: config.DiscoveryConfig{Provider: "file"},
+	}
+	err := config.Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for file without path")
+	}
+}
+
+func TestDefaults_Discovery(t *testing.T) {
+	cfg := config.Config{Discovery: config.DiscoveryConfig{Provider: "static"}}
+	config.Defaults(&cfg)
+	if cfg.Discovery.RefreshSec != 30 {
+		t.Fatalf("default refresh_sec should be 30, got %d", cfg.Discovery.RefreshSec)
+	}
+}
+
+func TestLoad_Discovery_YAML(t *testing.T) {
+	yaml := `
+host: "0.0.0.0"
+port: 4444
+backends:
+  - url: "http://localhost:4441"
+discovery:
+  provider: dns
+  dns_name: "api.internal"
+  refresh_sec: 30
+`
+	path := writeTempYAML(t, yaml)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Discovery.Provider != "dns" {
+		t.Fatalf("discovery provider: %s", cfg.Discovery.Provider)
+	}
+	if cfg.Discovery.DNSName != "api.internal" {
+		t.Fatalf("dns_name: %s", cfg.Discovery.DNSName)
+	}
+	if cfg.Discovery.RefreshSec != 30 {
+		t.Fatalf("refresh_sec: %d", cfg.Discovery.RefreshSec)
+	}
+}
+
 // ---------- helpers ----------
 
 func writeTempYAML(t *testing.T, content string) string {

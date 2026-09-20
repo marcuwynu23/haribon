@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://haribon.marcuwynu23.com/schemas/haribon-config",
+  "title": "Haribon Configuration",
+  "description": "Configuration schema for the Haribon Layer 7 load balancer",
+  "type": "object",
+  "required": [],
+  "properties": {
+    "host": {
+      "type": "string",
+      "default": "0.0.0.0",
+      "description": "Bind address for the load balancer"
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "default": 4444,
+      "description": "Port for the load balancer"
+    },
+    "logging": {
+      "type": "boolean",
+      "default": true,
+      "description": "Enable structured JSON logging"
+    },
+    "log_path": {
+      "type": "string",
+      "default": "./haribon.log",
+      "description": "Path to the log file"
+    },
+    "log_format": {
+      "type": "string",
+      "enum": ["json", "text"],
+      "default": "json",
+      "description": "Log output format"
+    },
+    "exporters": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["stdout", "file", "loki", "fluentbit", "elasticsearch"]
+      },
+      "default": ["stdout"],
+      "description": "Log exporters to enable"
+    },
+    "shutdown_timeout_sec": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 15,
+      "description": "Graceful shutdown timeout in seconds"
+    },
+    "backends": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["url"],
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Backend URL (http or https)"
+          },
+          "weight": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 1,
+            "description": "Weight for weighted round-robin"
+          }
+        },
+        "additionalProperties": false
+      },
+      "description": "Static backend server list"
+    },
+    "balancer": {
+      "type": "object",
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": ["round_robin", "weighted_round_robin", "least_connections", "random", "ip_hash"],
+          "default": "round_robin",
+          "description": "Load balancing algorithm"
+        }
+      },
+      "additionalProperties": false
+    },
+    "health": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "interval_sec": { "type": "integer", "minimum": 1, "default": 10 },
+        "timeout_sec": { "type": "integer", "minimum": 1, "default": 2 },
+        "path": { "type": "string", "default": "/" },
+        "healthy_threshold": { "type": "integer", "minimum": 1, "default": 1 },
+        "unhealthy_threshold": { "type": "integer", "minimum": 1, "default": 2 }
+      },
+      "additionalProperties": false
+    },
+    "retry": {
+      "type": "object",
+      "properties": {
+        "max_retries": { "type": "integer", "minimum": 0, "default": 1 }
+      },
+      "additionalProperties": false
+    },
+    "breaker": {
+      "type": "object",
+      "properties": {
+        "failure_threshold": { "type": "integer", "minimum": 1, "default": 5 },
+        "cooldown_sec": { "type": "integer", "minimum": 1, "default": 30 }
+      },
+      "additionalProperties": false
+    },
+    "discovery": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": ["static", "dns", "file"],
+          "default": "static",
+          "description": "Backend discovery mechanism"
+        },
+        "dns_name": {
+          "type": "string",
+          "description": "DNS name for DNS-based discovery"
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Path to JSON file for file-based discovery"
+        },
+        "refresh_sec": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 30,
+          "description": "Poll interval in seconds"
+        }
+      },
+      "required": ["provider"],
+      "additionalProperties": false,
+      "description": "Backend auto-discovery configuration"
+    },
+    "admin": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "addr": { "type": "string", "default": "127.0.0.1:4445" },
+        "token": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

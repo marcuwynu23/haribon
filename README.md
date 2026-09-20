@@ -30,6 +30,9 @@ It provides **5 pluggable balancing strategies** — round-robin, weighted round
 - Safe HTTP reverse proxying with hop-by-hop stripping, `X-Forwarded-For/Proto` preservation, correct `Content-Length` handling for large HTML/frontend assets
 - Environment variable overrides (`HARIBON_HOST`, `HARIBON_PORT`, `HARIBON_CONFIG`) + `haribon check --config` validation for CI
 - Graceful shutdown on `SIGINT/SIGTERM` with configurable `shutdown_timeout_sec`, `haribon version` via `-ldflags`
+- **Zero-downtime config hot reload** via `SIGHUP` (`kill -HUP`) or `--watch_config` file polling — backends, weights, TLS certs, log level swap atomically without restart
+- **Backend auto-discovery** (DNS, file) for dynamic environments — `discovery.provider: dns|file|static`
+- `haribon validate --config` — JSON schema validation for editor autocomplete and CI
 
 ---
 
@@ -61,12 +64,21 @@ backends:
     weight: 1
   - url: "http://localhost:4443"
     weight: 1
+
+# Backend auto-discovery (optional)
+discovery:
+  provider: static  # static | dns | file
+  dns_name: "api.internal"
+  file_path: "/etc/haribon/backends.json"
+  refresh_sec: 30
 ```
 
 > Today Haribon serves **one** frontend (one `host:port`) and **one** backend pool per process.
 > Serving multiple applications/hosts from a single binary (virtual hosts, multi-frontend listeners)
 > with high-scale L7 performance is tracked in
 > [#10](https://github.com/marcuwynu23/haribon/issues/10) — the flat config above will keep working unchanged.
+
+> **Hot reload**: Edit the config, then `kill -HUP <pid>` or use `--watch_config N` to poll every N seconds. Backends, weights, TLS certs, and log level swap atomically — in-flight requests complete on the previous snapshot. Failed reloads keep the old config. See [docs/hot-reload.md](docs/hot-reload.md).
 
 ---
 
@@ -83,6 +95,8 @@ backends:
 
 ```bash
 ./haribon start --config haribon-config.yml
+# With file polling every 30 seconds
+./haribon start --config haribon-config.yml --watch_config 30
 ```
 
 ---
@@ -92,7 +106,9 @@ backends:
 | Command | Description | Exit code |
 |---------|-------------|-----------|
 | `haribon start --config <file>` | Start the load balancer | 0 ok / 2 bind error |
+| `haribon start --config <file> --watch_config N` | Start with file polling every N seconds | 0 ok / 2 bind error |
 | `haribon check --config <file>` | Validate config, print backends, exit | 0 ok / 1 error |
+| `haribon validate --config <file>` | Validate config against JSON schema | 0 ok / 1 error |
 | `haribon version` | Print version | 0 |
 | `haribon --help` | Print usage | 0 |
 
@@ -101,11 +117,43 @@ backends:
 ```bash
 # In your CI pipeline — fails build on bad config before deployment
 haribon check --config haribon-config.yml
+haribon validate --config haribon-config.yml
 # ok: 3 backend(s), probes /healthz /readyz enabled
 #   [0] http://localhost:4441
 #   [1] http://localhost:4442
 #   [2] http://localhost:4443
 ```
+
+### Hot reload (zero-downtime config changes)
+
+```bash
+# Start the load balancer
+haribon start --config haribon-config.yml &
+
+# Edit haribon-config.yml, then trigger reload
+kill -HUP %1
+
+# Or use file polling (checks every 30 seconds)
+haribon start --config haribon-config.yml --watch_config 30
+
+# Logs: {"level":"info","msg":"config reloaded","path":"haribon-config.yml"}
+```
+
+- In-flight requests complete on the previous config snapshot
+- Failed reloads log `level:error` and keep the old config — never crash
+- Backend list, weights, TLS certs, and log level swap atomically
+- Listener address/port changes require a restart
+
+### Backend auto-discovery
+
+```yaml
+discovery:
+  provider: dns        # static | dns | file
+  dns_name: "api.internal"
+  refresh_sec: 30
+```
+
+DNS provider resolves A records on each poll. File provider reads a JSON array of backend URLs. Discovered backends follow the same health checks as static backends. See [docs/hot-reload.md](docs/hot-reload.md).
 
 ### Health probes
 
@@ -277,6 +325,9 @@ go test ./...
 - Mutex-protected log writer
 - RWMutex backend health store
 - Context-based request cancellation
+- `config.Snapshot` with `atomic.Pointer` for atomic config swaps on SIGHUP
+- `internal/discover` package with Provider interface (static, dns, file)
+- JSON schema at `schema/haribon-config.schema.json` for editor autocomplete
 
 ---
 

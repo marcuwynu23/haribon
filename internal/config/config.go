@@ -18,13 +18,13 @@ import (
 
 // Sentinel errors — callers decide exit code and log level.
 var (
-	ErrNoBackends           = errors.New("no backends configured")
-	ErrBadScheme            = errors.New("backend url must use http or https scheme")
-	ErrInvalidPort          = errors.New("port must be between 1 and 65535")
-	ErrEmptyBackendURL      = errors.New("backend url must not be empty")
-	ErrUnknownStrategy      = errors.New("unknown balancer strategy")
-	ErrInvalidLogFormat     = errors.New("log format must be json or text")
-	ErrInvalidLogExporter   = errors.New("invalid log exporter")
+	ErrNoBackends         = errors.New("no backends configured")
+	ErrBadScheme          = errors.New("backend url must use http or https scheme")
+	ErrInvalidPort        = errors.New("port must be between 1 and 65535")
+	ErrEmptyBackendURL    = errors.New("backend url must not be empty")
+	ErrUnknownStrategy    = errors.New("unknown balancer strategy")
+	ErrInvalidLogFormat   = errors.New("log format must be json or text")
+	ErrInvalidLogExporter = errors.New("invalid log exporter")
 )
 
 // BalancerConfig controls which algorithm is used.
@@ -55,9 +55,9 @@ type BreakerConfig struct {
 
 // AdminConfig controls the management UI and admin API.
 type AdminConfig struct {
-	Enabled          bool   `yaml:"enabled"`         // default false
-	Addr             string `yaml:"addr"`            // default 127.0.0.1:4445
-	Token            string `yaml:"token"`           // optional bearer token for mutating ops
+	Enabled bool   `yaml:"enabled"` // default false
+	Addr    string `yaml:"addr"`    // default 127.0.0.1:4445
+	Token   string `yaml:"token"`   // optional bearer token for mutating ops
 }
 
 // Backend represents a single upstream server.
@@ -66,22 +66,31 @@ type Backend struct {
 	Weight int    `yaml:"weight"` // used by weighted_round_robin; 0 == 1
 }
 
+// DiscoveryConfig controls backend auto-discovery.
+type DiscoveryConfig struct {
+	Provider   string `yaml:"provider"`    // static | dns | file
+	DNSName    string `yaml:"dns_name"`    // DNS name for dns provider
+	FilePath   string `yaml:"file_path"`   // file path for file provider
+	RefreshSec int    `yaml:"refresh_sec"` // poll interval in seconds
+}
+
 // Config is the top-level configuration structure.
 // YAML field names are stable — additive only per AGENTS.md §1.1.
 type Config struct {
-	MainHost           string         `yaml:"host"`
-	MainPort           int            `yaml:"port"`
-	Logging            bool           `yaml:"logging"`
-	LogPath            string         `yaml:"log_path"`
-	LogFormat          string         `yaml:"log_format"`        // json (default) | text
-	Exporters          []string       `yaml:"exporters"`         // stdout | file | loki | fluentbit | elasticsearch
-	Admin              AdminConfig    `yaml:"admin"`
-	ShutdownTimeoutSec int            `yaml:"shutdown_timeout_sec"`
-	Backends           []Backend      `yaml:"backends"`
-	Balancer           BalancerConfig `yaml:"balancer"`
-	Health             HealthConfig   `yaml:"health"`
-	Retry              RetryConfig    `yaml:"retry"`
-	Breaker            BreakerConfig  `yaml:"breaker"`
+	MainHost           string          `yaml:"host"`
+	MainPort           int             `yaml:"port"`
+	Logging            bool            `yaml:"logging"`
+	LogPath            string          `yaml:"log_path"`
+	LogFormat          string          `yaml:"log_format"` // json (default) | text
+	Exporters          []string        `yaml:"exporters"`  // stdout | file | loki | fluentbit | elasticsearch
+	Admin              AdminConfig     `yaml:"admin"`
+	ShutdownTimeoutSec int             `yaml:"shutdown_timeout_sec"`
+	Backends           []Backend       `yaml:"backends"`
+	Balancer           BalancerConfig  `yaml:"balancer"`
+	Health             HealthConfig    `yaml:"health"`
+	Retry              RetryConfig     `yaml:"retry"`
+	Breaker            BreakerConfig   `yaml:"breaker"`
+	Discovery          DiscoveryConfig `yaml:"discovery"`
 }
 
 // Load reads and unmarshals the YAML config at path.
@@ -100,7 +109,7 @@ func Load(path string) (Config, error) {
 // Validate checks structural correctness and returns the first error found.
 // Called by both startCommand and checkCommand so validation is never skipped.
 func Validate(cfg Config) error {
-	if len(cfg.Backends) == 0 {
+	if len(cfg.Backends) == 0 && cfg.Discovery.Provider == "" {
 		return ErrNoBackends
 	}
 	for i, b := range cfg.Backends {
@@ -113,6 +122,23 @@ func Validate(cfg Config) error {
 		}
 		if u.Scheme != "http" && u.Scheme != "https" {
 			return fmt.Errorf("backend[%d] %q: %w", i, b.Host, ErrBadScheme)
+		}
+	}
+	if cfg.Discovery.Provider != "" {
+		switch cfg.Discovery.Provider {
+		case "static", "dns", "file":
+			// valid
+		default:
+			return fmt.Errorf("discovery provider %q: unknown provider", cfg.Discovery.Provider)
+		}
+		if cfg.Discovery.Provider == "dns" && cfg.Discovery.DNSName == "" {
+			return fmt.Errorf("discovery dns requires dns_name")
+		}
+		if cfg.Discovery.Provider == "file" && cfg.Discovery.FilePath == "" {
+			return fmt.Errorf("discovery file requires file_path")
+		}
+		if cfg.Discovery.RefreshSec <= 0 {
+			cfg.Discovery.RefreshSec = 30
 		}
 	}
 	if cfg.MainPort != 0 && (cfg.MainPort < 1 || cfg.MainPort > 65535) {
@@ -216,6 +242,9 @@ func Defaults(cfg *Config) {
 	}
 	if cfg.LogFormat != "json" && cfg.LogFormat != "text" {
 		cfg.LogFormat = "json"
+	}
+	if cfg.Discovery.RefreshSec <= 0 {
+		cfg.Discovery.RefreshSec = 30
 	}
 	if len(cfg.Exporters) == 0 {
 		cfg.Exporters = []string{"stdout"}
