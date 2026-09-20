@@ -155,6 +155,44 @@ func (r *Registry) BreakerState(backend string) State {
 	return br.state
 }
 
+// CarryOver copies breaker state for every backend present in both registries.
+//
+// Problem:  a config reload or discovery refresh rebuilds the registry from
+//
+//	scratch; a backend sitting in an open circuit would silently get a
+//	fresh, closed breaker and immediately absorb traffic again.
+//
+// Choice:   copy state/consecutiveFails/openAt for URLs present in both maps;
+//
+//	backends that disappeared keep no state (they are gone).
+//
+// Failure:  a backend removed and re-added within one reload loses its state —
+//
+//	acceptable, the breaker re-opens within failureThreshold requests.
+func (r *Registry) CarryOver(old *Registry) {
+	if old == nil || old == r {
+		return
+	}
+
+	old.mu.RLock()
+	defer old.mu.RUnlock()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for url, ob := range old.breakers {
+		nb, ok := r.breakers[url]
+		if !ok {
+			continue
+		}
+		ob.mu.Lock()
+		nb.state = ob.state
+		nb.consecutiveFails = ob.consecutiveFails
+		nb.openAt = ob.openAt
+		ob.mu.Unlock()
+	}
+}
+
 // transition changes state and fires the logger (must hold br.mu).
 func (br *breaker) transition(to State) {
 	from := br.state
