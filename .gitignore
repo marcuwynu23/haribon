@@ -7,4 +7,5 @@ data/
 logs/
 tmp/
 coverage
+*.coverage
 coverage.out
