@@ -1,0 +1,34 @@
+# Cluster configuration with gossip-based health sharing
+host: "0.0.0.0"
+port: 4444
+balancer:
+  strategy: round_robin
+
+# Backend pool
+backends:
+  - url: "http://backend1:8080"
+  - url: "http://backend2:8080"
+  - url: "http://backend3:8080"
+
+# Cluster gossip health sharing
+cluster:
+  enabled: true
+  node_id: "${HOSTNAME}"
+  peers:
+    - "haribon-0:7946"
+    - "haribon-1:7946"
+    - "haribon-2:7946"
+  gossip_interval_sec: 5
+  gossip_addr: "0.0.0.0:7946"
+
+# Active health checking
+health:
+  enabled: true
+  interval_sec: 10
+  timeout_sec: 2
+
+# Backend auto-discovery (optional)
+discovery:
+  provider: dns
+  dns_name: "api.internal"
+  refresh_sec: 30

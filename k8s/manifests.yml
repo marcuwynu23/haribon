@@ -1,0 +1,129 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: haribon
+  labels:
+    app: haribon
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: haribon
+  template:
+    metadata:
+      labels:
+        app: haribon
+    spec:
+      containers:
+        - name: haribon
+          image: ghcr.io/marcuwynu23/haribon:latest
+          ports:
+            - containerPort: 4444
+              name: lb
+              protocol: TCP
+            - containerPort: 7946
+              name: gossip
+              protocol: UDP
+          env:
+            - name: HARIBON_CONFIG
+              value: /etc/haribon/config.yml
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.name
+            - name: HARIBON_PORT
+              value: "4444"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/haribon
+            - name: gossip-config
+              mountPath: /etc/haribon/cluster
+      volumes:
+        - name: config
+          configMap:
+            name: haribon-config
+        - name: gossip-config
+          configMap:
+            name: haribon-cluster
+      readinessProbe:
+        httpGet:
+          path: /readyz
+          port: 4444
+        initialDelaySeconds: 5
+        periodSeconds: 10
+      livenessProbe:
+        httpGet:
+          path: /healthz
+          port: 4444
+        initialDelaySeconds: 15
+        periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: haribon
+  labels:
+    app: haribon
+spec:
+  type: ClusterIP
+  selector:
+    app: haribon
+  ports:
+    - port: 4444
+      targetPort: 4444
+      protocol: TCP
+      name: lb
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: haribon-headless
+  labels:
+    app: haribon
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: haribon
+  ports:
+    - port: 7946
+      targetPort: 7946
+      protocol: UDP
+      name: gossip
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: haribon
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: haribon
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        type: CPU
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Pods
+      pods:
+        metric:
+          name: haribon_requests_total
+        target:
+          type: AverageValue
+          averageValue: "1000"
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: haribon
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: haribon

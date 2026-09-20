@@ -33,10 +33,20 @@ breaker:
 #   file_path: "/etc/haribon/backends.json"
 #   refresh_sec: 30
 
+# Cluster gossip health sharing (optional)
+# cluster:
+#   enabled: false
+#   node_id: "${HOSTNAME}"
+#   peers:
+#     - "haribon-0:7946"
+#     - "haribon-1:7946"
+#   gossip_interval_sec: 5
+#   gossip_addr: "0.0.0.0:7946"
+
 backends:
-- url: "http://localhost:4441"
-  weight: 1
-- url: "http://localhost:4442"
-  weight: 1
-- url: "http://localhost:4443"
-  weight: 4
+ - url: "http://localhost:4441"
+   weight: 1
+ - url: "http://localhost:4442"
+   weight: 1
+ - url: "http://localhost:4443"
+   weight: 4

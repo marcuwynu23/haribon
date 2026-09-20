@@ -1,4 +1,4 @@
-.PHONY: dev start build dist release clean test validate schema
+.PHONY: dev start build dist release clean test validate schema cluster-test
 
 # Safe version fallback (no tags = dev)
 VERSION := $(shell git describe --tags --abbrev=0 2>/dev/null || echo dev)
@@ -56,3 +56,6 @@ validate: build
 
 schema:
 	@echo "Schema available at schema/haribon-config.schema.json"
+
+cluster-test:
+	go test ./internal/cluster/ -count=1 -v -race

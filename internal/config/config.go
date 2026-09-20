@@ -74,6 +74,15 @@ type DiscoveryConfig struct {
 	RefreshSec int    `yaml:"refresh_sec"` // poll interval in seconds
 }
 
+// ClusterConfig controls cluster gossip-based health sharing.
+type ClusterConfig struct {
+	Enabled    bool     `yaml:"enabled"`             // default false
+	NodeID     string   `yaml:"node_id"`             // typically ${HOSTNAME}
+	Peers      []string `yaml:"peers"`               // peer gossip addresses
+	GossipSec  int      `yaml:"gossip_interval_sec"` // default 5
+	GossipAddr string   `yaml:"gossip_addr"`         // default 0.0.0.0:7946
+}
+
 // Config is the top-level configuration structure.
 // YAML field names are stable — additive only per AGENTS.md §1.1.
 type Config struct {
@@ -91,6 +100,7 @@ type Config struct {
 	Retry              RetryConfig     `yaml:"retry"`
 	Breaker            BreakerConfig   `yaml:"breaker"`
 	Discovery          DiscoveryConfig `yaml:"discovery"`
+	Cluster            ClusterConfig   `yaml:"cluster"`
 }
 
 // Load reads and unmarshals the YAML config at path.
@@ -245,6 +255,12 @@ func Defaults(cfg *Config) {
 	}
 	if cfg.Discovery.RefreshSec <= 0 {
 		cfg.Discovery.RefreshSec = 30
+	}
+	if cfg.Cluster.GossipSec <= 0 && cfg.Cluster.Enabled {
+		cfg.Cluster.GossipSec = 5
+	}
+	if cfg.Cluster.GossipAddr == "" && cfg.Cluster.Enabled {
+		cfg.Cluster.GossipAddr = "0.0.0.0:7946"
 	}
 	if len(cfg.Exporters) == 0 {
 		cfg.Exporters = []string{"stdout"}

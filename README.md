@@ -33,6 +33,8 @@ It provides **5 pluggable balancing strategies** — round-robin, weighted round
 - **Zero-downtime config hot reload** via `SIGHUP` (`kill -HUP`) or `--watch_config` file polling — backends, weights, TLS certs, log level swap atomically without restart
 - **Backend auto-discovery** (DNS, file) for dynamic environments — `discovery.provider: dns|file|static`
 - `haribon validate --config` — JSON schema validation for editor autocomplete and CI
+- **Clustering & HA** — gossip-based health sharing across N replicas, DNS/file peer discovery, k8s Deployment + HPA + PDB support
+- **Cluster metrics** — `haribon_cluster_peers`, `haribon_cluster_term`, `haribon_config_hash_mismatch_total`
 
 ---
 
@@ -71,6 +73,16 @@ discovery:
   dns_name: "api.internal"
   file_path: "/etc/haribon/backends.json"
   refresh_sec: 30
+
+# Cluster gossip health sharing (optional)
+cluster:
+  enabled: true
+  node_id: "${HOSTNAME}"
+  peers:
+    - "haribon-0:7946"
+    - "haribon-1:7946"
+  gossip_interval_sec: 5
+  gossip_addr: "0.0.0.0:7946"
 ```
 
 > Today Haribon serves **one** frontend (one `host:port`) and **one** backend pool per process.
@@ -327,7 +339,9 @@ go test ./...
 - Context-based request cancellation
 - `config.Snapshot` with `atomic.Pointer` for atomic config swaps on SIGHUP
 - `internal/discover` package with Provider interface (static, dns, file)
+- `internal/cluster` package with gossip protocol for health sharing (port 7946 UDP)
 - JSON schema at `schema/haribon-config.schema.json` for editor autocomplete
+- AP consistency model: eventual consistency, partition-tolerant, split-brain safe
 
 ---
 
