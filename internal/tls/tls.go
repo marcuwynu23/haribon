@@ -12,15 +12,29 @@ package tls
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"time"
 )
 
 // Load validates certFile/keyFile and returns a *tls.Config with the
 // requested minimum protocol version ("1.2" default, "1.3" supported).
+// Expired or not-yet-valid certificates are rejected at startup.
 func Load(certFile, keyFile, minVersion string) (*tls.Config, error) {
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		return nil, fmt.Errorf("load tls key pair: %w", err)
+	}
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return nil, fmt.Errorf("parse tls certificate: %w", err)
+	}
+	now := time.Now()
+	if now.After(leaf.NotAfter) {
+		return nil, fmt.Errorf("tls certificate expired at %s", leaf.NotAfter.UTC().Format(time.RFC3339))
+	}
+	if now.Before(leaf.NotBefore) {
+		return nil, fmt.Errorf("tls certificate not valid before %s", leaf.NotBefore.UTC().Format(time.RFC3339))
 	}
 	var ver uint16
 	switch minVersion {
