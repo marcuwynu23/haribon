@@ -11,10 +11,13 @@ Tracked as GitHub issues — pick one up and link your PR with `Closes #<n>`:
 | 5 | Zero-downtime ops: hot-reload, auto-discovery, JSON schema | [#5](https://github.com/marcuwynu23/haribon/issues/5) | [x] Done |
 | 6 | Clustering / HA: replicated Haribon group with gossip | [#6](https://github.com/marcuwynu23/haribon/issues/6) | [x] Done |
 | 7 | TLS termination, request tracing, rate limiting (split → #20–#23) | [#7](https://github.com/marcuwynu23/haribon/issues/7) | [x] Split |
-| 20 | TLS termination at edge | [#20](https://github.com/marcuwynu23/haribon/issues/20) | [ ] Open |
+| 20 | TLS termination at edge | [#20](https://github.com/marcuwynu23/haribon/issues/20) | [x] Done |
 | 21 | X-Request-ID tracing propagation | [#21](https://github.com/marcuwynu23/haribon/issues/21) | [x] Done |
 | 22 | Per-client rate limiting | [#22](https://github.com/marcuwynu23/haribon/issues/22) | [ ] Open |
 | 23 | HTTP→HTTPS redirect listener | [#23](https://github.com/marcuwynu23/haribon/issues/23) | [ ] Open |
+| 24 | TLS config block + schema (prereq for #20) | [#24](https://github.com/marcuwynu23/haribon/issues/24) | [x] Done |
+| 25 | TLS cert handling + ServeTLS (prereq for #20) | [#25](https://github.com/marcuwynu23/haribon/issues/25) | [x] Done |
+| 26 | TLS tests: expiry, e2e (prereq for #20) | [#26](https://github.com/marcuwynu23/haribon/issues/26) | [x] Done |
 | 8 | Full observability: Prometheus metrics, OpenTelemetry tracing, Grafana | [#8](https://github.com/marcuwynu23/haribon/issues/8) | [ ] Open |
 | 9 | UI Observability section: charts, trace lookup, log tail | [#9](https://github.com/marcuwynu23/haribon/issues/9) | [ ] Open |
 | 10 | Multi-host serving (virtual hosts) + high-scale L7 performance | [#10](https://github.com/marcuwynu23/haribon/issues/10) | [ ] Open |
@@ -26,4 +29,4 @@ Tracked as GitHub issues — pick one up and link your PR with `Closes #<n>`:
 > Issue #4 is **not**: the `admin:` block is read from the config file and its defaults are
 > filled in, but nothing listens on `admin.addr`. There is no management UI and no admin
 > API — setting `admin:` today changes nothing. Issues #7–#10 are open as well.
-> #7 is split into #20–#23; only #21 (request tracing) is done.
+> #7 is split into #20–#23; #20 (TLS) and #21 (request tracing) are done, #22–#23 remain.
