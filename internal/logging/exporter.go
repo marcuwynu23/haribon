@@ -41,6 +41,7 @@ type LogEntry struct {
 	DurationMS int64  `json:"duration_ms"`
 	Retries    int    `json:"retries,omitempty"`
 	Level      string `json:"level"`
+	RequestID  string `json:"request_id,omitempty"`
 }
 
 // Record converts the entry to a generic map, used by exporters that need
@@ -57,6 +58,9 @@ func (e LogEntry) Record() map[string]interface{} {
 	}
 	if e.Retries > 0 {
 		m["retries"] = e.Retries
+	}
+	if e.RequestID != "" {
+		m["request_id"] = e.RequestID
 	}
 	return m
 }

@@ -51,6 +51,7 @@ type LogEntry struct {
 	DurationMS int64  `json:"duration_ms"`
 	Retries    int    `json:"retries,omitempty"`
 	Level      string `json:"level"`
+	RequestID  string `json:"request_id,omitempty"`
 }
 
 // ==========================
@@ -135,6 +136,7 @@ func writeLog(entry LogEntry) {
 			DurationMS: entry.DurationMS,
 			Retries:    entry.Retries,
 			Level:      entry.Level,
+			RequestID:  entry.RequestID,
 		})
 	}
 
@@ -150,6 +152,7 @@ func writeLog(entry LogEntry) {
 			DurationMS: entry.DurationMS,
 			Retries:    entry.Retries,
 			Level:      entry.Level,
+			RequestID:  entry.RequestID,
 		}))
 		return
 	}
@@ -232,6 +235,7 @@ func makeProxyLogger(reg *metrics.Registry) proxy.Logger {
 			DurationMS: e.DurationMS,
 			Retries:    e.Retries,
 			Level:      e.Level,
+			RequestID:  e.RequestID,
 		})
 		if reg == nil {
 			return

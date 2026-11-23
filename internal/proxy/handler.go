@@ -23,6 +23,8 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
@@ -86,6 +88,7 @@ type LogEntry struct {
 	DurationMS int64
 	Retries    int
 	Level      string
+	RequestID  string
 }
 
 // Logger callback (same signature used in main.go).
@@ -168,6 +171,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		bodyBuf, _ = io.ReadAll(r.Body)
 		_ = r.Body.Close()
 	}
+
+	requestID := r.Header.Get("X-Request-ID")
+	if requestID == "" {
+		b := make([]byte, 8)
+		_, _ = rand.Read(b)
+		requestID = hex.EncodeToString(b)
+	}
+	r.Header.Set("X-Request-ID", requestID)
+	w.Header().Set("X-Request-ID", requestID)
 
 	maxAttempts := 1
 	if idempotentMethod(r.Method) {
@@ -274,7 +286,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.logger(LogEntry{
 				Method: r.Method, Path: r.URL.Path, Backend: server,
 				Status: resp.StatusCode, DurationMS: time.Since(start).Milliseconds(),
-				Retries: retries, Level: "info",
+				Retries: retries, Level: "info", RequestID: requestID,
 			})
 		}
 
@@ -287,7 +299,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.logger(LogEntry{
 			Method: r.Method, Path: r.URL.Path, Backend: "",
 			Status: http.StatusServiceUnavailable, DurationMS: time.Since(start).Milliseconds(),
-			Retries: retries, Level: "error",
+			Retries: retries, Level: "error", RequestID: requestID,
 		})
 	}
 	h.incCounter("haribon_errors_total", "reason", "all_backends_failed")
