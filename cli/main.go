@@ -29,6 +29,7 @@ import (
 	"github.com/marcuwynu23/haribon/internal/logging"
 	"github.com/marcuwynu23/haribon/internal/metrics"
 	"github.com/marcuwynu23/haribon/internal/proxy"
+	htls "github.com/marcuwynu23/haribon/internal/tls"
 )
 
 // version is injected at build time via:
@@ -370,9 +371,26 @@ func startCommand(args []string) {
 		MaxHeaderBytes: 1 << 20,
 	}
 
+	tlsEnabled := cfg.TLS.Enabled
+	if tlsEnabled {
+		tlsCfg, err := htls.Load(cfg.TLS.CertFile, cfg.TLS.KeyFile, cfg.TLS.MinVersion)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "tls error: %v\n", err)
+			os.Exit(1)
+		}
+		srv.TLSConfig = tlsCfg
+		log.Printf("tls enabled (min_version=%s)\n", cfg.TLS.MinVersion)
+	}
+
 	go func() {
 		log.Printf("running on %s\n", addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		var err error
+		if tlsEnabled {
+			err = srv.ListenAndServeTLS(cfg.TLS.CertFile, cfg.TLS.KeyFile)
+		} else {
+			err = srv.ListenAndServe()
+		}
+		if err != nil && err != http.ErrServerClosed {
 			fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 			os.Exit(2)
 		}
