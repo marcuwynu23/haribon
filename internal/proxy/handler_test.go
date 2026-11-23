@@ -33,6 +33,29 @@ func newHandler(bal balancer.Balancer, hc balancer.HealthChecker, maxRetries int
 	)
 }
 
+func TestProxy_RequestIDPropagated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Request-ID") != "abc123" {
+			t.Errorf("backend missing request id: %q", r.Header.Get("X-Request-ID"))
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	bal, _ := balancer.NewRoundRobin([]balancer.BackendEntry{{URL: srv.URL}})
+	h := newHandler(bal, alwaysHealthy{}, 0)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	req.Header.Set("X-Request-ID", "abc123")
+	h.ServeHTTP(rec, req)
+
+	if rec.Header().Get("X-Request-ID") != "abc123" {
+		t.Fatalf("response missing request id: %q", rec.Header().Get("X-Request-ID"))
+	}
+}
+
 // ─── round-robin integration ───
 
 func TestProxy_RoundRobinIntegration(t *testing.T) {
