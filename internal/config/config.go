@@ -109,6 +109,14 @@ type FluentbitConfig struct {
 	Addr string `yaml:"addr"` // default localhost:24224
 }
 
+// TLSConfig controls TLS termination at the edge.
+type TLSConfig struct {
+	Enabled    bool   `yaml:"enabled"`     // default false
+	CertFile   string `yaml:"cert_file"`   // path to PEM cert
+	KeyFile    string `yaml:"key_file"`    // path to PEM key
+	MinVersion string `yaml:"min_version"` // "1.2" (default) | "1.3"
+}
+
 // Config is the top-level configuration structure.
 // YAML field names are stable — additive only per AGENTS.md §1.1.
 type Config struct {
@@ -130,6 +138,7 @@ type Config struct {
 	Breaker            BreakerConfig       `yaml:"breaker"`
 	Discovery          DiscoveryConfig     `yaml:"discovery"`
 	Cluster            ClusterConfig       `yaml:"cluster"`
+	TLS                TLSConfig           `yaml:"tls"`
 }
 
 // envRef matches ${VAR} references in the raw YAML.
@@ -242,6 +251,17 @@ func Validate(cfg Config) error {
 	if cfg.Cluster.Enabled && cfg.Cluster.GossipSec < 0 {
 		return fmt.Errorf("cluster gossip_interval_sec must not be negative")
 	}
+	if cfg.TLS.Enabled {
+		if cfg.TLS.CertFile == "" {
+			return fmt.Errorf("tls.enabled requires cert_file")
+		}
+		if cfg.TLS.KeyFile == "" {
+			return fmt.Errorf("tls.enabled requires key_file")
+		}
+		if cfg.TLS.MinVersion != "" && cfg.TLS.MinVersion != "1.2" && cfg.TLS.MinVersion != "1.3" {
+			return fmt.Errorf("tls.min_version %q: must be 1.2 or 1.3", cfg.TLS.MinVersion)
+		}
+	}
 	return nil
 }
 
@@ -345,6 +365,9 @@ func Defaults(cfg *Config) {
 	}
 	if cfg.ShutdownTimeoutSec <= 0 {
 		cfg.ShutdownTimeoutSec = 15
+	}
+	if cfg.TLS.MinVersion == "" {
+		cfg.TLS.MinVersion = "1.2"
 	}
 	// Exporter targets. These are only consulted when the matching name is
 	// listed in exporters:, but defaulting them unconditionally keeps the

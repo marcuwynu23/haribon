@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/marcuwynu23/haribon/internal/config"
@@ -86,6 +87,41 @@ backends:
 }
 
 // ---------- Validate ----------
+
+func TestValidate_TLS(t *testing.T) {
+	base := config.Config{
+		MainPort: 4444,
+		Backends: []config.Backend{{Host: "http://localhost:4441"}},
+	}
+	// disabled → ok
+	if err := config.Validate(base); err != nil {
+		t.Fatalf("tls disabled: unexpected error: %v", err)
+	}
+	// enabled with cert+key → ok
+	ok := base
+	ok.TLS = config.TLSConfig{Enabled: true, CertFile: "a.crt", KeyFile: "a.key", MinVersion: "1.2"}
+	if err := config.Validate(ok); err != nil {
+		t.Fatalf("tls enabled complete: unexpected error: %v", err)
+	}
+	// enabled missing cert
+	missingCert := base
+	missingCert.TLS = config.TLSConfig{Enabled: true, KeyFile: "a.key"}
+	if err := config.Validate(missingCert); err == nil || !strings.Contains(err.Error(), "cert_file") {
+		t.Fatalf("expected cert_file error, got %v", err)
+	}
+	// enabled missing key
+	missingKey := base
+	missingKey.TLS = config.TLSConfig{Enabled: true, CertFile: "a.crt"}
+	if err := config.Validate(missingKey); err == nil || !strings.Contains(err.Error(), "key_file") {
+		t.Fatalf("expected key_file error, got %v", err)
+	}
+	// bad min_version
+	badVer := base
+	badVer.TLS = config.TLSConfig{Enabled: true, CertFile: "a.crt", KeyFile: "a.key", MinVersion: "1.0"}
+	if err := config.Validate(badVer); err == nil || !strings.Contains(err.Error(), "min_version") {
+		t.Fatalf("expected min_version error, got %v", err)
+	}
+}
 
 func TestValidate_OK(t *testing.T) {
 	cfg := config.Config{

@@ -69,6 +69,15 @@ breaker:
 #   gossip_interval_sec: 5
 #   gossip_addr: "0.0.0.0:7946"
 
+# TLS termination at the edge (optional). Requires cert_file and key_file when
+# enabled. min_version: "1.2" (default) or "1.3". Mount certs as secrets; never
+# bake them into the image.
+# tls:
+#   enabled: false
+#   cert_file: "/etc/haribon/tls.crt"
+#   key_file: "/etc/haribon/tls.key"
+#   min_version: "1.2"
+
 # weight: 0 (or omitted) means 1. Used by weighted_round_robin.
 backends:
   - url: "http://localhost:4441"
